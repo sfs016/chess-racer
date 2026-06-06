@@ -53,8 +53,8 @@ or reducers changed) `pnpm spacetime:generate`.
 
 - [x] **M1** — Lobby: create/join rooms, piece select, lanes, presence, ready,
       host-start. Live room state synced across clients.
-- [ ] **M2** — Board + server-authoritative movement (legal vectors, occupancy
-      blocking, contested-tile resolution), finish detection.
+- [x] **M2** — Board + server-authoritative movement (slide vectors, occupancy
+      blocking, move cooldown, contested-tile resolution), finish detection.
 - [ ] **M3** — Procedural seeded track: walls + pawn mines.
 - [ ] **M4** — Quick Play + bots (scheduled tick), abandoned-room reaper.
 - [ ] **M5** — Items (promotion / freeze / mine), fog polish, sound, animation.

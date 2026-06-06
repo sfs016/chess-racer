@@ -22,3 +22,6 @@ pnpm-debug.log*
 # Editor
 .idea/
 *.swp
+
+# Playwright MCP screenshots/snapshots
+.playwright-mcp/
