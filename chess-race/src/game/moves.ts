@@ -11,18 +11,24 @@ export const FINISH_COL = TRACK_COLS - 1;
 
 export type Cell = { row: number; col: number };
 
+// Per-tile blocker kind:
+//   "wall"  — blocks a ray and cannot be landed on (knight jumps over it)
+//   "racer" — blocks a ray and cannot be landed on (knight jumps over it)
+//   "mine"  — can be landed on (captures it) but a ray cannot pass beyond it
+export type Blockers = Map<string, "wall" | "racer" | "mine">;
+
 export function cellKey(row: number, col: number): string {
   return `${row},${col}`;
 }
 
-// All legal destination tiles for a piece, given tiles occupied by other racers.
-// Forward-only (col never decreases); rook/bishop slide along a ray until the
-// first blocker or the edge of vision; knight jumps (only the landing matters).
+// All legal destination tiles for a piece given the blocker map. Forward-only
+// (col never decreases); rook/bishop slide along a ray until the first blocker
+// or the edge of vision; knight jumps (only its landing tile matters).
 export function legalTargets(
   piece: string,
   fromRow: number,
   fromCol: number,
-  occupied: Set<string>,
+  blockers: Blockers,
 ): Cell[] {
   const targets: Cell[] = [];
   const maxCol = Math.min(fromCol + VISION, TRACK_COLS - 1);
@@ -33,7 +39,12 @@ export function legalTargets(
     let r = fromRow + dr;
     let c = fromCol + dc;
     while (inBounds(r, c) && c <= maxCol) {
-      if (occupied.has(cellKey(r, c))) break;
+      const blk = blockers.get(cellKey(r, c));
+      if (blk === "mine") {
+        targets.push({ row: r, col: c });
+        break;
+      }
+      if (blk) break;
       targets.push({ row: r, col: c });
       r += dr;
       c += dc;
@@ -62,7 +73,8 @@ export function legalTargets(
     for (const { dr, dc } of ls) {
       const r = fromRow + dr;
       const c = fromCol + dc;
-      if (inBounds(r, c) && c <= maxCol && !occupied.has(cellKey(r, c))) {
+      const blk = blockers.get(cellKey(r, c));
+      if (inBounds(r, c) && c <= maxCol && blk !== "wall" && blk !== "racer") {
         targets.push({ row: r, col: c });
       }
     }

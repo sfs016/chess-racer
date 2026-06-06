@@ -10,6 +10,15 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
+export const Obstacle = __t.object("Obstacle", {
+  id: __t.u64(),
+  roomCode: __t.string(),
+  row: __t.u32(),
+  col: __t.u32(),
+  kind: __t.string(),
+});
+export type Obstacle = __Infer<typeof Obstacle>;
+
 export const Racer = __t.object("Racer", {
   id: __t.u64(),
   identity: __t.identity(),
@@ -25,6 +34,7 @@ export const Racer = __t.object("Racer", {
   finishRank: __t.u32(),
   joinedAt: __t.timestamp(),
   lastMoveAt: __t.timestamp(),
+  stunnedUntil: __t.timestamp(),
 });
 export type Racer = __Infer<typeof Racer>;
 

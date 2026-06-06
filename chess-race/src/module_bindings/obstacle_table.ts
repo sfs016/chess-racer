@@ -12,18 +12,8 @@ import {
 
 export default __t.row({
   id: __t.u64().primaryKey(),
-  identity: __t.identity(),
   roomCode: __t.string().name("room_code"),
-  name: __t.string(),
-  piece: __t.string(),
   row: __t.u32(),
   col: __t.u32(),
-  isBot: __t.bool().name("is_bot"),
-  online: __t.bool(),
-  ready: __t.bool(),
-  finished: __t.bool(),
-  finishRank: __t.u32().name("finish_rank"),
-  joinedAt: __t.timestamp().name("joined_at"),
-  lastMoveAt: __t.timestamp().name("last_move_at"),
-  stunnedUntil: __t.timestamp().name("stunned_until"),
+  kind: __t.string(),
 });

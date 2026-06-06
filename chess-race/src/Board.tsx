@@ -1,8 +1,9 @@
 import { useMemo } from "react";
-import type { Racer, Room } from "./module_bindings/types";
+import type { Racer, Room, Obstacle } from "./module_bindings/types";
 import {
   legalTargets,
   cellKey,
+  type Blockers,
   TRACK_COLS,
   TRACK_ROWS,
   VISION,
@@ -33,36 +34,65 @@ const LANE_COLORS = [
 type Props = {
   me: Racer;
   racers: Racer[];
+  obstacles: Obstacle[];
   room: Room;
   cooldownRemaining: number; // ms until the next move is allowed (0 = ready)
+  stunned: boolean;
   onMove: (row: number, col: number) => void;
 };
 
 export default function Board({
   me,
   racers,
+  obstacles,
   room,
   cooldownRemaining,
+  stunned,
   onMove,
 }: Props) {
   const ready =
     cooldownRemaining <= 0 && !me.finished && room.status === "racing";
 
-  // Occupancy + legal moves mirror the server authority.
-  const { legalSet, racersByCell } = useMemo(() => {
-    const occupied = new Set<string>();
-    const byCell = new Map<string, Racer>();
-    for (const r of racers) {
-      byCell.set(cellKey(r.row, r.col), r);
-      if (r.id !== me.id && !r.finished) occupied.add(cellKey(r.row, r.col));
-    }
-    const legal = new Set(
-      legalTargets(me.piece, me.row, me.col, occupied).map((c) =>
-        cellKey(c.row, c.col),
-      ),
-    );
-    return { legalSet: legal, racersByCell: byCell };
-  }, [racers, me.id, me.piece, me.row, me.col]);
+  // Blockers + legal moves + threatened tiles mirror the server authority.
+  const { legalSet, racersByCell, wallSet, mineSet, threatSet } =
+    useMemo(() => {
+      const blockers: Blockers = new Map();
+      const walls = new Set<string>();
+      const mines = new Set<string>();
+      const threats = new Set<string>();
+      const byCell = new Map<string, Racer>();
+
+      for (const o of obstacles) {
+        const k = cellKey(o.row, o.col);
+        if (o.kind === "wall") {
+          walls.add(k);
+          blockers.set(k, "wall");
+        } else {
+          mines.add(k);
+          blockers.set(k, "mine");
+          // Pawn mine threatens its two forward diagonals.
+          threats.add(cellKey(o.row - 1, o.col + 1));
+          threats.add(cellKey(o.row + 1, o.col + 1));
+        }
+      }
+      for (const r of racers) {
+        byCell.set(cellKey(r.row, r.col), r);
+        if (r.id !== me.id && !r.finished)
+          blockers.set(cellKey(r.row, r.col), "racer");
+      }
+      const legal = new Set(
+        legalTargets(me.piece, me.row, me.col, blockers).map((c) =>
+          cellKey(c.row, c.col),
+        ),
+      );
+      return {
+        legalSet: legal,
+        racersByCell: byCell,
+        wallSet: walls,
+        mineSet: mines,
+        threatSet: threats,
+      };
+    }, [obstacles, racers, me.id, me.piece, me.row, me.col]);
 
   // Player-centric window: a little behind, full vision ahead.
   const startCol = Math.max(0, me.col - 2);
@@ -74,6 +104,14 @@ export default function Board({
   const finishers = [...racers]
     .filter((r) => r.finished)
     .sort((a, b) => a.finishRank - b.finishRank);
+
+  const status = me.finished
+    ? `finished #${me.finishRank}`
+    : stunned
+      ? "stunned"
+      : ready
+        ? "ready"
+        : "…";
 
   return (
     <div className="board-wrap">
@@ -89,11 +127,15 @@ export default function Board({
             className="cooldown-fill"
             style={{
               width: `${Math.max(0, Math.min(1, 1 - cooldownRemaining / 600)) * 100}%`,
-              background: ready ? "var(--good)" : "var(--accent)",
+              background: stunned
+                ? "var(--bad)"
+                : ready
+                  ? "var(--good)"
+                  : "var(--accent)",
             }}
           />
         </div>
-        <span className="muted">{ready ? "ready" : "…"}</span>
+        <span className={`muted ${stunned ? "stun-label" : ""}`}>{status}</span>
       </div>
 
       <div
@@ -106,7 +148,11 @@ export default function Board({
             const occupant = racersByCell.get(key);
             const isLegal = legalSet.has(key);
             const isMe = occupant?.id === me.id;
+            const isWall = wallSet.has(key);
+            const isMine = mineSet.has(key);
+            const isThreat = threatSet.has(key);
             const isFinish = col === FINISH_COL;
+            const clickable = isLegal && ready;
             return (
               <div
                 key={key}
@@ -114,9 +160,11 @@ export default function Board({
                   "cell",
                   (row + col) % 2 === 0 ? "cell-a" : "cell-b",
                   isFinish ? "cell-finish" : "",
-                  isLegal && ready ? "cell-legal" : "",
+                  isWall ? "cell-wall" : "",
+                  isThreat && !isWall ? "cell-threat" : "",
+                  clickable ? "cell-legal" : "",
                 ].join(" ")}
-                onClick={() => isLegal && ready && onMove(row, col)}
+                onClick={() => clickable && onMove(row, col)}
               >
                 {occupant ? (
                   <span
@@ -126,7 +174,11 @@ export default function Board({
                   >
                     {GLYPHS[occupant.piece] ?? "♟"}
                   </span>
-                ) : isLegal && ready ? (
+                ) : isWall ? (
+                  <span className="wall-mark" />
+                ) : isMine ? (
+                  <span className="mine-mark">✸</span>
+                ) : clickable ? (
                   <span className="legal-dot" />
                 ) : null}
               </div>
@@ -136,7 +188,9 @@ export default function Board({
       </div>
 
       <p className="muted fog-note">
-        Fog: you can see and move up to {VISION} tiles ahead.
+        Fog: you see {VISION} tiles ahead. <span className="legend-wall" /> wall
+        · <span className="legend-mine">✸</span> mine (land on it to defuse; its
+        diagonals knock you back)
       </p>
 
       {/* Full-track ladder so you can read the whole field's progress. */}
@@ -167,7 +221,7 @@ export default function Board({
 
       {room.status === "finished" && (
         <div className="results">
-          <h2>Results</h2>
+          <h2>🏁 Results</h2>
           {finishers.map((r) => (
             <div className="result-row" key={r.id.toString()}>
               <span className="rank">#{r.finishRank}</span>

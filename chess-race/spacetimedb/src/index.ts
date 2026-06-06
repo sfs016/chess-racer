@@ -5,8 +5,9 @@
 // through reducers (transactional, deterministic). Clients subscribe to tables
 // and call reducers — there is no separate API server.
 //
-// Milestone M1: lobby only — create/join rooms, pick a piece, assign lanes.
-// Movement, hazards, items, and bots arrive in later milestones.
+// Implemented: lobby (rooms/racers/lanes), authoritative slide movement with a
+// cooldown, and a procedurally-generated track of walls + pawn mines.
+// Still to come: quick-play + bots, items, deploy.
 // ─────────────────────────────────────────────────────────────────────────────
 import {
   schema,
@@ -16,6 +17,7 @@ import {
   type ReducerCtx,
   type InferSchema,
 } from "spacetimedb/server";
+import { Timestamp } from "spacetimedb";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 // NOTE: a SpacetimeDB module may only export spacetime artifacts (reducers,
@@ -27,8 +29,17 @@ const VISION = 10; // how many columns ahead a racer can see / reach
 const FINISH_COL = TRACK_COLS - 1; // landing here (or beyond) finishes the race
 const MOVE_COOLDOWN_MICROS = 600_000n; // 0.6s between moves (PRD: 500–700ms)
 
+const SAFE_COLS = 3; // columns near the start kept clear of hazards
+const MINE_KNOCKBACK = 3; // tiles a triggered pawn mine knocks you back
+const STUN_MICROS = 1_500_000n; // 1.5s stun after triggering a mine
+
 const PIECES = ["rook", "knight", "bishop"] as const;
 type Piece = (typeof PIECES)[number];
+
+// Obstacle kinds (string `kind` column on `obstacle`):
+//   "wall"      — blocks rook/bishop rays; knight jumps it; nobody lands on it
+//   "pawn_mine" — landable (captured when landed on); threatens its two forward
+//                 diagonals (mr±1, mc+1): landing there knocks you back + stuns
 
 // Room lifecycle (string column on `room`): lobby -> countdown -> racing -> finished
 
@@ -43,7 +54,7 @@ const room = table(
   { name: "room", public: true },
   {
     code: t.string().primaryKey(),
-    status: t.string(), // one of ROOM_STATUSES
+    status: t.string(), // lobby | countdown | racing | finished
     seed: t.u32(), // PRNG seed for procedural track (used from M3 on)
     host: t.identity(), // who created the room (may start the race)
     createdAt: t.timestamp(),
@@ -69,10 +80,23 @@ const racer = table(
     finishRank: t.u32(), // 0 until finished, then 1-based placement
     joinedAt: t.timestamp(),
     lastMoveAt: t.timestamp(), // for the per-move cooldown
+    stunnedUntil: t.timestamp(), // mine stun; no moves until this time
   },
 );
 
-const spacetimedb = schema({ room, racer });
+// One row per hazard tile on a room's procedurally-generated track.
+const obstacle = table(
+  { name: "obstacle", public: true },
+  {
+    id: t.u64().primaryKey().autoInc(),
+    roomCode: t.string().index("btree"),
+    row: t.u32(),
+    col: t.u32(),
+    kind: t.string(), // "wall" | "pawn_mine"
+  },
+);
+
+const spacetimedb = schema({ room, racer, obstacle });
 export default spacetimedb;
 
 // Reducer context typed against this module's schema (gives us ctx.db.room etc).
@@ -141,35 +165,45 @@ function cleanupRoomIfEmpty(ctx: Ctx, code: string) {
 }
 
 // ── Movement ─────────────────────────────────────────────────────────────────
-// NOTE: keep this in sync with the client's src/game/moves.ts. The client uses
-// it to highlight legal destinations; the server uses it as the authority.
+// NOTE: keep legalTargets in sync with the client's src/game/moves.ts. The
+// client uses it to highlight legal destinations; the server is the authority.
 
 type Cell = { row: number; col: number };
+
+// Per-tile blocker kind used by movement:
+//   "wall"  — blocks a ray and cannot be landed on (knight jumps over it)
+//   "racer" — blocks a ray and cannot be landed on (knight jumps over it)
+//   "mine"  — can be landed on (captures it) but a ray cannot pass beyond it
+type Blockers = Map<string, "wall" | "racer" | "mine">;
 
 function cellKey(row: number, col: number): string {
   return `${row},${col}`;
 }
 
-// All legal destination tiles for a piece, given the tiles occupied by other
-// racers. Movement is forward-only (col never decreases); rook/bishop slide
-// along a ray until the first blocker or the edge of vision; knight jumps.
+// All legal destination tiles for a piece given the blocker map. Movement is
+// forward-only (col never decreases); rook/bishop slide along a ray until the
+// first blocker or the edge of vision; knight jumps (only its landing matters).
 function legalTargets(
   piece: string,
   fromRow: number,
   fromCol: number,
-  occupied: Set<string>,
+  blockers: Blockers,
 ): Cell[] {
   const targets: Cell[] = [];
   const maxCol = Math.min(fromCol + VISION, TRACK_COLS - 1);
   const inBounds = (r: number, c: number) =>
     r >= 0 && r < TRACK_ROWS && c >= 0 && c < TRACK_COLS;
 
-  // Slide along (dr, dc), landing on any empty tile up to the first blocker.
   const slide = (dr: number, dc: number) => {
     let r = fromRow + dr;
     let c = fromCol + dc;
     while (inBounds(r, c) && c <= maxCol) {
-      if (occupied.has(cellKey(r, c))) break; // blocked: can't pass or land
+      const blk = blockers.get(cellKey(r, c));
+      if (blk === "mine") {
+        targets.push({ row: r, col: c }); // can land (capture), but stops here
+        break;
+      }
+      if (blk) break; // wall or racer: can't land, can't pass
       targets.push({ row: r, col: c });
       r += dr;
       c += dc;
@@ -189,8 +223,8 @@ function legalTargets(
     slide(-1, 1);
   }
   if (piece === "knight") {
-    // Forward L-jumps only (column delta > 0); jumps over occupied tiles, so
-    // only the landing square must be empty.
+    // Forward L-jumps only (column delta > 0); jumps over blockers, so only the
+    // landing tile matters — and you can't land on a wall or another racer.
     const ls = [
       { dr: 2, dc: 1 },
       { dr: -2, dc: 1 },
@@ -200,12 +234,82 @@ function legalTargets(
     for (const { dr, dc } of ls) {
       const r = fromRow + dr;
       const c = fromCol + dc;
-      if (inBounds(r, c) && c <= maxCol && !occupied.has(cellKey(r, c))) {
+      const blk = blockers.get(cellKey(r, c));
+      if (inBounds(r, c) && c <= maxCol && blk !== "wall" && blk !== "racer") {
         targets.push({ row: r, col: c });
       }
     }
   }
   return targets;
+}
+
+// ── Procedural track ─────────────────────────────────────────────────────────
+
+// Small deterministic PRNG so a room's stored `seed` always regenerates the
+// same track (ctx.random can't be seeded by us).
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let x = Math.imul(a ^ (a >>> 15), 1 | a);
+    x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x;
+    return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Generate (or regenerate) the obstacle layout for a room from its seed. Phases
+// follow the PRD: calm opening, contended midgame, high-pressure endgame. We
+// never wall off more than (TRACK_ROWS - 4) lanes in a column, so every column
+// stays passable.
+function generateTrack(ctx: Ctx, code: string, seed: number) {
+  for (const o of [...ctx.db.obstacle.roomCode.filter(code)]) {
+    ctx.db.obstacle.id.delete(o.id);
+  }
+
+  const rng = mulberry32(seed);
+  const used = new Set<string>();
+  const place = (row: number, col: number, kind: string) => {
+    const k = cellKey(row, col);
+    if (used.has(k)) return;
+    used.add(k);
+    ctx.db.obstacle.insert({ id: 0n, roomCode: code, row, col, kind });
+  };
+
+  for (let col = SAFE_COLS; col < FINISH_COL; col++) {
+    let wallChance: number, mineChance: number, maxWalls: number;
+    if (col < 20) {
+      wallChance = 0.12;
+      mineChance = 0;
+      maxWalls = 1;
+    } else if (col < 65) {
+      wallChance = 0.38;
+      mineChance = 0.14;
+      maxWalls = 2;
+    } else {
+      wallChance = 0.46;
+      mineChance = 0.12;
+      maxWalls = 3;
+    }
+
+    if (rng() < wallChance) {
+      const count = 1 + Math.floor(rng() * maxWalls);
+      for (let i = 0; i < count; i++) {
+        if (countColumn(used, col) >= TRACK_ROWS - 4) break; // keep it passable
+        place(Math.floor(rng() * TRACK_ROWS), col, "wall");
+      }
+    }
+    if (rng() < mineChance) {
+      place(Math.floor(rng() * TRACK_ROWS), col, "pawn_mine");
+    }
+  }
+}
+
+function countColumn(used: Set<string>, col: number): number {
+  let n = 0;
+  for (let row = 0; row < TRACK_ROWS; row++) {
+    if (used.has(cellKey(row, col))) n++;
+  }
+  return n;
 }
 
 // ── Reducers ─────────────────────────────────────────────────────────────────
@@ -245,6 +349,7 @@ export const createRoom = spacetimedb.reducer(
       finishRank: 0,
       joinedAt: ctx.timestamp,
       lastMoveAt: ctx.timestamp,
+      stunnedUntil: ctx.timestamp,
     });
   },
 );
@@ -281,6 +386,7 @@ export const joinRoom = spacetimedb.reducer(
       finishRank: 0,
       joinedAt: ctx.timestamp,
       lastMoveAt: ctx.timestamp,
+      stunnedUntil: ctx.timestamp,
     });
   },
 );
@@ -319,6 +425,8 @@ export const startRace = spacetimedb.reducer(
       throw new SenderError("Only the host can start the race");
     if (room.status !== "lobby") throw new SenderError("Race already started");
 
+    generateTrack(ctx, code, room.seed);
+
     for (const r of racersInRoom(ctx, code)) {
       ctx.db.racer.id.update({
         ...r,
@@ -326,6 +434,7 @@ export const startRace = spacetimedb.reducer(
         finished: false,
         finishRank: 0,
         lastMoveAt: ctx.timestamp, // cooldown counts from the start
+        stunnedUntil: ctx.timestamp,
       });
     }
     ctx.db.room.code.update({
@@ -337,9 +446,10 @@ export const startRace = spacetimedb.reducer(
 );
 
 // Submit a move to a chosen destination tile. The server re-validates that the
-// tile is a legal slide/jump target for the caller's piece, enforces the move
-// cooldown, and resolves contested tiles by reducer order (the second racer to
-// claim a tile finds it occupied and is rejected).
+// tile is a legal slide/jump target for the caller's piece (given walls, mines,
+// and other racers), enforces the cooldown and mine stun, applies mine effects,
+// and resolves contested tiles by reducer order (the second racer to claim a
+// tile finds it occupied and is rejected).
 export const submitMove = spacetimedb.reducer(
   { toRow: t.u32(), toCol: t.u32() },
   (ctx, { toRow, toCol }) => {
@@ -351,23 +461,53 @@ export const submitMove = spacetimedb.reducer(
       throw new SenderError("Race is not in progress");
     if (me.finished) throw new SenderError("You have already finished");
 
-    const elapsed =
-      ctx.timestamp.microsSinceUnixEpoch - me.lastMoveAt.microsSinceUnixEpoch;
-    if (elapsed < MOVE_COOLDOWN_MICROS)
+    const nowMicros = ctx.timestamp.microsSinceUnixEpoch;
+    if (nowMicros < me.stunnedUntil.microsSinceUnixEpoch)
+      throw new SenderError("You are stunned");
+    if (nowMicros - me.lastMoveAt.microsSinceUnixEpoch < MOVE_COOLDOWN_MICROS)
       throw new SenderError("Move is on cooldown");
 
-    // Tiles occupied by other (still-racing) racers block sliding and landing.
-    const occupied = new Set<string>();
+    // Build the blocker map: walls + mines from the track, plus other racers.
+    const obstacles = [...ctx.db.obstacle.roomCode.filter(me.roomCode)];
+    const blockers: Blockers = new Map();
+    for (const o of obstacles) {
+      blockers.set(cellKey(o.row, o.col), o.kind === "wall" ? "wall" : "mine");
+    }
     for (const r of ctx.db.racer.roomCode.filter(me.roomCode)) {
-      if (r.id !== me.id && !r.finished) occupied.add(cellKey(r.row, r.col));
+      if (r.id !== me.id && !r.finished)
+        blockers.set(cellKey(r.row, r.col), "racer");
     }
 
-    const legal = legalTargets(me.piece, me.row, me.col, occupied);
+    const legal = legalTargets(me.piece, me.row, me.col, blockers);
     if (!legal.some((c) => c.row === toRow && c.col === toCol)) {
       throw new SenderError("Illegal move");
     }
 
-    const finished = toCol >= FINISH_COL;
+    // Resolve mine interactions at the landing tile.
+    let finalCol = toCol;
+    let stunnedUntil = me.stunnedUntil;
+    const minedHere = obstacles.find(
+      (o) => o.kind === "pawn_mine" && o.row === toRow && o.col === toCol,
+    );
+    if (minedHere) {
+      // Landed directly on a mine: capture (remove) it, no penalty.
+      ctx.db.obstacle.id.delete(minedHere.id);
+    } else {
+      // A pawn mine threatens its two forward diagonals (mr±1, mc+1), so the
+      // landing tile is threatened by a mine one column back, one row off.
+      const threatened = obstacles.some(
+        (o) =>
+          o.kind === "pawn_mine" &&
+          o.col === toCol - 1 &&
+          (o.row === toRow - 1 || o.row === toRow + 1),
+      );
+      if (threatened) {
+        finalCol = Math.max(0, toCol - MINE_KNOCKBACK);
+        stunnedUntil = new Timestamp(nowMicros + STUN_MICROS);
+      }
+    }
+
+    const finished = finalCol >= FINISH_COL;
     const finishRank = finished
       ? racersInRoom(ctx, me.roomCode).filter((r) => r.finished).length + 1
       : 0;
@@ -375,8 +515,9 @@ export const submitMove = spacetimedb.reducer(
     ctx.db.racer.id.update({
       ...me,
       row: toRow,
-      col: toCol,
+      col: finalCol,
       lastMoveAt: ctx.timestamp,
+      stunnedUntil,
       finished,
       finishRank,
     });

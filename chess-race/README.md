@@ -55,7 +55,8 @@ or reducers changed) `pnpm spacetime:generate`.
       host-start. Live room state synced across clients.
 - [x] **M2** — Board + server-authoritative movement (slide vectors, occupancy
       blocking, move cooldown, contested-tile resolution), finish detection.
-- [ ] **M3** — Procedural seeded track: walls + pawn mines.
+- [x] **M3** — Procedural seeded track (phased walls + pawn mines), wall/mine
+      movement rules, mine capture + knockback/stun, board hazard rendering.
 - [ ] **M4** — Quick Play + bots (scheduled tick), abandoned-room reaper.
 - [ ] **M5** — Items (promotion / freeze / mine), fog polish, sound, animation.
 - [ ] **M6** — Deploy: Maincloud backend + static frontend.

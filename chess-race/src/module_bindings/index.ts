@@ -45,6 +45,7 @@ import SubmitMoveReducer from "./submit_move_reducer";
 // Import all procedure arg schemas
 
 // Import all table schema definitions
+import ObstacleRow from "./obstacle_table";
 import RacerRow from "./racer_table";
 import RoomRow from "./room_table";
 
@@ -52,6 +53,20 @@ import RoomRow from "./room_table";
 
 /** The schema information for all tables in this module. This is defined the same was as the tables would have been defined in the server. */
 const tablesSchema = __schema({
+  obstacle: __table({
+    name: 'obstacle',
+    indexes: [
+      { accessor: 'id', name: 'obstacle_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'roomCode', name: 'obstacle_room_code_idx_btree', algorithm: 'btree', columns: [
+        'roomCode',
+      ] },
+    ],
+    constraints: [
+      { name: 'obstacle_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, ObstacleRow),
   racer: __table({
     name: 'racer',
     indexes: [

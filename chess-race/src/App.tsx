@@ -47,6 +47,7 @@ function App() {
   // useTable auto-subscribes; for the lobby the row counts are tiny.
   const [rooms] = useTable(tables.room);
   const [racers] = useTable(tables.racer);
+  const [obstacles] = useTable(tables.obstacle);
 
   const [name, setName] = useState(() => safeGet(NAME_KEY));
   const [piece, setPiece] = useState<string>("rook");
@@ -179,8 +180,14 @@ function App() {
 
   // Racing / results view.
   if (myRoom.status === "racing" || myRoom.status === "finished") {
-    const sinceLastMove = now - Number(myRacer.lastMoveAt.toDate().getTime());
-    const cooldownRemaining = Math.max(0, MOVE_COOLDOWN_MS - sinceLastMove);
+    const sinceLastMove = now - myRacer.lastMoveAt.toDate().getTime();
+    const stunRemaining = myRacer.stunnedUntil.toDate().getTime() - now;
+    const cooldownRemaining = Math.max(
+      0,
+      MOVE_COOLDOWN_MS - sinceLastMove,
+      stunRemaining,
+    );
+    const roomObstacles = obstacles.filter((o) => o.roomCode === myRoom.code);
     return (
       <div className="screen">
         <div className="race-header">
@@ -193,8 +200,10 @@ function App() {
         <Board
           me={myRacer}
           racers={roomRacers}
+          obstacles={roomObstacles}
           room={myRoom}
           cooldownRemaining={cooldownRemaining}
+          stunned={stunRemaining > 0}
           onMove={(row, col) => run(submitMove({ toRow: row, toCol: col }))}
         />
         {error && <p className="error">{error}</p>}
