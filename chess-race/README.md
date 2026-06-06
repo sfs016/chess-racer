@@ -1,67 +1,61 @@
-# SpacetimeDB TypeScript Quickstart Chat
+# ♞ Chess Race
 
-This is a simple chat application that demonstrates how to use SpacetimeDB with TypeScript and React. The chat application is a simple chat room where users can send messages to each other. The chat application uses SpacetimeDB to store the chat messages.
+A real-time multiplayer racing game where each player is a chess piece racing
+down a 100-tile track, moving only by that piece's legal vectors — blocking,
+dodging hazards, and navigating fog. Built on **SpacetimeDB** as the
+authoritative real-time backend for the SpacetimeDB hackathon.
 
-It is based directly on the plain React + TypeScript + Vite template. You can follow the quickstart guide for how creating this project from scratch at [SpacetimeDB TypeScript Quickstart](https://spacetimedb.com/docs/sdks/typescript/quickstart).
+See [`../chess_race_prd.md`](../chess_race_prd.md) for the full product spec.
 
-You can follow the instructions for creating your own SpacetimeDB module here: [SpacetimeDB Rust Module Quickstart](https://spacetimedb.com/docs/modules/rust/quickstart). Place the module in the `quickstart-chat/server` directory for compability with this project.
+## Architecture
 
-In order to run this example, you need to:
+- **`spacetimedb/src/index.ts`** — the SpacetimeDB server module (WebAssembly,
+  TypeScript). All game state lives in tables; all mutations go through reducers
+  (transactional, deterministic, server-authoritative). There is no separate API
+  server — the client subscribes to tables and calls reducers directly.
+- **`src/`** — React + Vite client. `main.tsx` builds the `DbConnection`;
+  `App.tsx` renders the lobby/race and drives reducers via `useReducer` /
+  `useTable`.
+- **`src/module_bindings/`** — generated client bindings. **Do not edit**;
+  regenerate with `pnpm spacetime:generate`.
 
-- `pnpm build` in the root directory (`spacetimedb-typescriptsdk`)
-- `pnpm install` in this directory
-- `pnpm build` in this directory
-- `pnpm dev` in this directory to run the example
+## Local development
 
-Below is copied from the original template README:
+```bash
+pnpm install                     # once
 
-# React + TypeScript + Vite
+# Terminal 1: local SpacetimeDB
+spacetime start
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
-
-Currently, two official plugins are available:
-
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react/README.md) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type aware lint rules:
-
-- Configure the top-level `parserOptions` property like this:
-
-```js
-export default tseslint.config({
-  languageOptions: {
-    // other options...
-    parserOptions: {
-      project: ["./tsconfig.node.json", "./tsconfig.app.json"],
-      tsconfigRootDir: import.meta.dirname,
-    },
-  },
-});
+# Terminal 2: publish the module + run the client
+pnpm spacetime:publish:local     # build + publish module to local server
+pnpm dev                         # Vite client at http://localhost:5173
 ```
 
-- Replace `tseslint.configs.recommended` to `tseslint.configs.recommendedTypeChecked` or `tseslint.configs.strictTypeChecked`
-- Optionally add `...tseslint.configs.stylisticTypeChecked`
-- Install [eslint-plugin-react](https://github.com/jsx-eslint/eslint-plugin-react) and update the config:
+`.env.local` points the client at `ws://localhost:3000` for development. After
+changing the server module, re-run `pnpm spacetime:publish:local` and (if tables
+or reducers changed) `pnpm spacetime:generate`.
 
-```js
-// eslint.config.js
-import react from "eslint-plugin-react";
+## Scripts
 
-export default tseslint.config({
-  // Set the react version
-  settings: { react: { version: "18.3" } },
-  plugins: {
-    // Add the react plugin
-    react,
-  },
-  rules: {
-    // other rules...
-    // Enable its recommended rules
-    ...react.configs.recommended.rules,
-    ...react.configs["jsx-runtime"].rules,
-  },
-});
-```
+| Command | What it does |
+| --- | --- |
+| `pnpm dev` | Vite dev server (client) |
+| `pnpm build` | Typecheck + production client build |
+| `pnpm test` | Vitest (render smoke test; no live DB needed) |
+| `pnpm lint` | ESLint + Prettier check |
+| `pnpm spacetime:build` | Build the server module |
+| `pnpm spacetime:generate` | Regenerate client bindings from the module |
+| `pnpm spacetime:publish:local` | Publish module to the local server |
+| `pnpm spacetime:publish` | Publish module to Maincloud |
+
+## Milestones
+
+- [x] **M1** — Lobby: create/join rooms, piece select, lanes, presence, ready,
+      host-start. Live room state synced across clients.
+- [ ] **M2** — Board + server-authoritative movement (legal vectors, occupancy
+      blocking, contested-tile resolution), finish detection.
+- [ ] **M3** — Procedural seeded track: walls + pawn mines.
+- [ ] **M4** — Quick Play + bots (scheduled tick), abandoned-room reaper.
+- [ ] **M5** — Items (promotion / freeze / mine), fog polish, sound, animation.
+- [ ] **M6** — Deploy: Maincloud backend + static frontend.
