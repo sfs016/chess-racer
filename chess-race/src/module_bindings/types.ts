@@ -24,6 +24,7 @@ export const Racer = __t.object("Racer", {
   finished: __t.bool(),
   finishRank: __t.u32(),
   joinedAt: __t.timestamp(),
+  lastMoveAt: __t.timestamp(),
 });
 export type Racer = __Infer<typeof Racer>;
 

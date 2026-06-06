@@ -40,6 +40,7 @@ import LeaveRoomReducer from "./leave_room_reducer";
 import SetPieceReducer from "./set_piece_reducer";
 import SetReadyReducer from "./set_ready_reducer";
 import StartRaceReducer from "./start_race_reducer";
+import SubmitMoveReducer from "./submit_move_reducer";
 
 // Import all procedure arg schemas
 
@@ -89,6 +90,7 @@ const reducersSchema = __reducers(
   __reducerSchema("set_piece", SetPieceReducer),
   __reducerSchema("set_ready", SetReadyReducer),
   __reducerSchema("start_race", StartRaceReducer),
+  __reducerSchema("submit_move", SubmitMoveReducer),
 );
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */

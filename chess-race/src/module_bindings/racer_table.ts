@@ -24,4 +24,5 @@ export default __t.row({
   finished: __t.bool(),
   finishRank: __t.u32().name("finish_rank"),
   joinedAt: __t.timestamp().name("joined_at"),
+  lastMoveAt: __t.timestamp().name("last_move_at"),
 });

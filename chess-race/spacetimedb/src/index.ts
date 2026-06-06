@@ -20,8 +20,12 @@ import {
 // ── Constants ────────────────────────────────────────────────────────────────
 // NOTE: a SpacetimeDB module may only export spacetime artifacts (reducers,
 // lifecycle hooks, the default schema). Plain constants must stay un-exported.
+const TRACK_COLS = 100; // race length; finish line is the last column
 const TRACK_ROWS = 10; // lanes
 const MAX_RACERS = 8; // human + bot cap per room
+const VISION = 10; // how many columns ahead a racer can see / reach
+const FINISH_COL = TRACK_COLS - 1; // landing here (or beyond) finishes the race
+const MOVE_COOLDOWN_MICROS = 600_000n; // 0.6s between moves (PRD: 500–700ms)
 
 const PIECES = ["rook", "knight", "bishop"] as const;
 type Piece = (typeof PIECES)[number];
@@ -64,6 +68,7 @@ const racer = table(
     finished: t.bool(),
     finishRank: t.u32(), // 0 until finished, then 1-based placement
     joinedAt: t.timestamp(),
+    lastMoveAt: t.timestamp(), // for the per-move cooldown
   },
 );
 
@@ -135,6 +140,74 @@ function cleanupRoomIfEmpty(ctx: Ctx, code: string) {
   }
 }
 
+// ── Movement ─────────────────────────────────────────────────────────────────
+// NOTE: keep this in sync with the client's src/game/moves.ts. The client uses
+// it to highlight legal destinations; the server uses it as the authority.
+
+type Cell = { row: number; col: number };
+
+function cellKey(row: number, col: number): string {
+  return `${row},${col}`;
+}
+
+// All legal destination tiles for a piece, given the tiles occupied by other
+// racers. Movement is forward-only (col never decreases); rook/bishop slide
+// along a ray until the first blocker or the edge of vision; knight jumps.
+function legalTargets(
+  piece: string,
+  fromRow: number,
+  fromCol: number,
+  occupied: Set<string>,
+): Cell[] {
+  const targets: Cell[] = [];
+  const maxCol = Math.min(fromCol + VISION, TRACK_COLS - 1);
+  const inBounds = (r: number, c: number) =>
+    r >= 0 && r < TRACK_ROWS && c >= 0 && c < TRACK_COLS;
+
+  // Slide along (dr, dc), landing on any empty tile up to the first blocker.
+  const slide = (dr: number, dc: number) => {
+    let r = fromRow + dr;
+    let c = fromCol + dc;
+    while (inBounds(r, c) && c <= maxCol) {
+      if (occupied.has(cellKey(r, c))) break; // blocked: can't pass or land
+      targets.push({ row: r, col: c });
+      r += dr;
+      c += dc;
+    }
+  };
+
+  const isRook = piece === "rook" || piece === "queen";
+  const isBishop = piece === "bishop" || piece === "queen";
+
+  if (isRook) {
+    slide(0, 1); // forward along the lane
+    slide(1, 0); // vertical (same column, still within vision)
+    slide(-1, 0);
+  }
+  if (isBishop) {
+    slide(1, 1); // forward diagonals only (forward-only rule)
+    slide(-1, 1);
+  }
+  if (piece === "knight") {
+    // Forward L-jumps only (column delta > 0); jumps over occupied tiles, so
+    // only the landing square must be empty.
+    const ls = [
+      { dr: 2, dc: 1 },
+      { dr: -2, dc: 1 },
+      { dr: 1, dc: 2 },
+      { dr: -1, dc: 2 },
+    ];
+    for (const { dr, dc } of ls) {
+      const r = fromRow + dr;
+      const c = fromCol + dc;
+      if (inBounds(r, c) && c <= maxCol && !occupied.has(cellKey(r, c))) {
+        targets.push({ row: r, col: c });
+      }
+    }
+  }
+  return targets;
+}
+
 // ── Reducers ─────────────────────────────────────────────────────────────────
 
 // Create a fresh room and seat the caller in it as host.
@@ -171,6 +244,7 @@ export const createRoom = spacetimedb.reducer(
       finished: false,
       finishRank: 0,
       joinedAt: ctx.timestamp,
+      lastMoveAt: ctx.timestamp,
     });
   },
 );
@@ -206,6 +280,7 @@ export const joinRoom = spacetimedb.reducer(
       finished: false,
       finishRank: 0,
       joinedAt: ctx.timestamp,
+      lastMoveAt: ctx.timestamp,
     });
   },
 );
@@ -245,13 +320,71 @@ export const startRace = spacetimedb.reducer(
     if (room.status !== "lobby") throw new SenderError("Race already started");
 
     for (const r of racersInRoom(ctx, code)) {
-      ctx.db.racer.id.update({ ...r, col: 0, finished: false, finishRank: 0 });
+      ctx.db.racer.id.update({
+        ...r,
+        col: 0,
+        finished: false,
+        finishRank: 0,
+        lastMoveAt: ctx.timestamp, // cooldown counts from the start
+      });
     }
     ctx.db.room.code.update({
       ...room,
       status: "racing",
       startedAt: ctx.timestamp,
     });
+  },
+);
+
+// Submit a move to a chosen destination tile. The server re-validates that the
+// tile is a legal slide/jump target for the caller's piece, enforces the move
+// cooldown, and resolves contested tiles by reducer order (the second racer to
+// claim a tile finds it occupied and is rejected).
+export const submitMove = spacetimedb.reducer(
+  { toRow: t.u32(), toCol: t.u32() },
+  (ctx, { toRow, toCol }) => {
+    const me = [...ctx.db.racer.identity.filter(ctx.sender)][0];
+    if (!me) throw new SenderError("You are not in a room");
+    const room = ctx.db.room.code.find(me.roomCode);
+    if (!room) throw new SenderError("Room not found");
+    if (room.status !== "racing")
+      throw new SenderError("Race is not in progress");
+    if (me.finished) throw new SenderError("You have already finished");
+
+    const elapsed =
+      ctx.timestamp.microsSinceUnixEpoch - me.lastMoveAt.microsSinceUnixEpoch;
+    if (elapsed < MOVE_COOLDOWN_MICROS)
+      throw new SenderError("Move is on cooldown");
+
+    // Tiles occupied by other (still-racing) racers block sliding and landing.
+    const occupied = new Set<string>();
+    for (const r of ctx.db.racer.roomCode.filter(me.roomCode)) {
+      if (r.id !== me.id && !r.finished) occupied.add(cellKey(r.row, r.col));
+    }
+
+    const legal = legalTargets(me.piece, me.row, me.col, occupied);
+    if (!legal.some((c) => c.row === toRow && c.col === toCol)) {
+      throw new SenderError("Illegal move");
+    }
+
+    const finished = toCol >= FINISH_COL;
+    const finishRank = finished
+      ? racersInRoom(ctx, me.roomCode).filter((r) => r.finished).length + 1
+      : 0;
+
+    ctx.db.racer.id.update({
+      ...me,
+      row: toRow,
+      col: toCol,
+      lastMoveAt: ctx.timestamp,
+      finished,
+      finishRank,
+    });
+
+    // End the race once every racer has crossed the line.
+    if (finished && racersInRoom(ctx, me.roomCode).every((r) => r.finished)) {
+      ctx.db.room.code.update({ ...room, status: "finished" });
+    }
   },
 );
 
