@@ -10,6 +10,7 @@ import {
   playGo,
   playPowerup,
   playWin,
+  playMove,
   setMuted,
   getMuted,
 } from "./sound";
@@ -315,7 +316,10 @@ function App() {
             now={now}
             cooldownRemaining={cooldownRemaining}
             stunned={stunRemaining > 0}
-            onMove={(row, col) => run(submitMove({ toRow: row, toCol: col }))}
+            onMove={(row, col) => {
+              playMove();
+              run(submitMove({ toRow: row, toCol: col }));
+            }}
             onUseItem={() => {
               playPowerup();
               run(activateItem());

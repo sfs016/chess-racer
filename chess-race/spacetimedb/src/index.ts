@@ -106,6 +106,7 @@ const racer = table(
     ready: t.bool(),
     finished: t.bool(),
     finishRank: t.u32(), // 0 until finished, then 1-based placement
+    finishedAt: t.timestamp(), // when this racer crossed the line
     joinedAt: t.timestamp(),
     lastMoveAt: t.timestamp(), // for the per-move cooldown
     stunnedUntil: t.timestamp(), // mine stun / freeze; no moves until this time
@@ -250,6 +251,7 @@ function seatHuman(
     ready: false,
     finished: false,
     finishRank: 0,
+    finishedAt: ctx.timestamp,
     joinedAt: ctx.timestamp,
     lastMoveAt: ctx.timestamp,
     stunnedUntil: ctx.timestamp,
@@ -501,6 +503,7 @@ function applyMove(ctx: Ctx, mover: RacerRow, toRow: number, toCol: number) {
     heldItem,
     finished,
     finishRank,
+    finishedAt: finished ? ctx.timestamp : mover.finishedAt,
   });
 
   const room = ctx.db.room.code.find(mover.roomCode);
@@ -620,6 +623,7 @@ function fillBots(ctx: Ctx, code: string, piece: string, count: number) {
       ready: true,
       finished: false,
       finishRank: 0,
+      finishedAt: ctx.timestamp,
       joinedAt: ctx.timestamp,
       lastMoveAt: ctx.timestamp,
       stunnedUntil: ctx.timestamp,

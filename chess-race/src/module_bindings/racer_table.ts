@@ -25,6 +25,7 @@ export default __t.row({
   ready: __t.bool(),
   finished: __t.bool(),
   finishRank: __t.u32().name("finish_rank"),
+  finishedAt: __t.timestamp().name("finished_at"),
   joinedAt: __t.timestamp().name("joined_at"),
   lastMoveAt: __t.timestamp().name("last_move_at"),
   stunnedUntil: __t.timestamp().name("stunned_until"),

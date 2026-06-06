@@ -1,4 +1,4 @@
-import { useMemo, type CSSProperties } from "react";
+import { useMemo, useRef, type CSSProperties } from "react";
 import type { Racer, Room, Obstacle, ItemSpawn } from "./module_bindings/types";
 import {
   legalTargets,
@@ -29,6 +29,13 @@ const ITEM_LABEL: Record<string, string> = {
   mine: "Drop a mine",
 };
 
+// A few columns of context behind the player; the rest of the window is vision
+// ahead. The board never re-lays-out: the whole track is rendered and slid via
+// a CSS transform, so it glides smoothly instead of jumping on each move.
+const BEHIND = 3;
+const WINDOW = VISION + BEHIND + 1;
+const ALL_COLS = Array.from({ length: TRACK_COLS }, (_, c) => c);
+
 type Props = {
   me: Racer;
   racers: Racer[];
@@ -41,6 +48,15 @@ type Props = {
   onMove: (row: number, col: number) => void;
   onUseItem: () => void;
 };
+
+function formatTime(ms: number): string {
+  const s = Math.max(0, ms / 1000);
+  if (s >= 60) {
+    const m = Math.floor(s / 60);
+    return `${m}:${(s - m * 60).toFixed(1).padStart(4, "0")}`;
+  }
+  return `${s.toFixed(1)}s`;
+}
 
 export default function Board({
   me,
@@ -57,10 +73,16 @@ export default function Board({
   const ready =
     cooldownRemaining <= 0 && !me.finished && room.status === "racing";
 
+  // Keep a stable handle to onMove so it isn't a cell-memo dependency.
+  const onMoveRef = useRef(onMove);
+  onMoveRef.current = onMove;
+
   // A racer moves as a Queen while promotion is active.
   const effPiece = (r: Racer) =>
     r.promotedUntil.toDate().getTime() > now ? "queen" : r.piece;
   const iAmQueen = effPiece(me) === "queen";
+
+  const laneColor = (r: Racer) => colorFor(r.colorIndex);
 
   // Blockers + legal moves + hazards + items mirror the server authority.
   const { legalSet, racersByCell, wallSet, mineSet, threatSet, itemByCell } =
@@ -106,16 +128,88 @@ export default function Board({
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [obstacles, items, racers, me.id, me.piece, me.row, me.col, iAmQueen]);
 
-  // Fixed-size camera: always the same number of columns (a few behind + full
-  // vision ahead), clamped at the track ends - no zoom near the finish, no shake.
-  const BEHIND = 3;
-  const WINDOW = VISION + BEHIND + 1;
-  const startCol = Math.max(0, Math.min(me.col - BEHIND, TRACK_COLS - WINDOW));
-  const cols: number[] = [];
-  for (let i = 0; i < WINDOW; i++) cols.push(startCol + i);
+  // Camera follows the player but the strip only re-renders cells when the board
+  // state changes (not on every 80ms HUD tick). The transform is applied to the
+  // wrapper, so following the player is a cheap, smooth glide.
+  const cameraCol = Math.max(0, Math.min(me.col - BEHIND, TRACK_COLS - WINDOW));
 
-  // Stable colour: keyed off the racer's fixed colorIndex, not its (moving) row.
-  const laneColor = (r: Racer) => colorFor(r.colorIndex);
+  // Refresh promoted glyphs ~2x/sec without re-rendering 1000 cells every tick.
+  const effBucket = Math.floor(now / 500);
+
+  const cells = useMemo(
+    () =>
+      Array.from({ length: TRACK_ROWS }).map((_, row) =>
+        ALL_COLS.map((col) => {
+          const key = cellKey(row, col);
+          const occupant = racersByCell.get(key);
+          const item = itemByCell.get(key);
+          const isLegal = legalSet.has(key);
+          const isMe = occupant?.id === me.id;
+          const isWall = wallSet.has(key);
+          const isMine = mineSet.has(key);
+          const isThreat = threatSet.has(key);
+          const isFinish = col >= FINISH_COL;
+          const clickable = isLegal && ready;
+          return (
+            <div
+              key={key}
+              className={[
+                "cell",
+                (row + col) % 2 === 0 ? "cell-a" : "cell-b",
+                isFinish ? "cell-finish" : "",
+                isWall ? "cell-wall" : "",
+                isThreat && !isWall ? "cell-threat" : "",
+                clickable ? "cell-legal" : "",
+              ].join(" ")}
+              onClick={() => clickable && onMoveRef.current(row, col)}
+            >
+              {occupant ? (
+                <span
+                  className={`piece ${isMe ? "piece-me" : ""} ${
+                    effPiece(occupant) === "queen" ? "piece-queen" : ""
+                  }`}
+                  style={{ "--lane": laneColor(occupant) } as CSSProperties}
+                  title={occupant.name}
+                >
+                  {GLYPHS[effPiece(occupant)] ?? "♟"}
+                </span>
+              ) : isWall ? (
+                <span className="wall-mark" />
+              ) : isMine ? (
+                <span className="pawn-mark">♟</span>
+              ) : item ? (
+                item.kind === "mine" ? (
+                  <span className="bomb item-mark" />
+                ) : item.kind === "promotion" ? (
+                  <span className="item-mark item-promotion">♛</span>
+                ) : (
+                  <span className="item-mark item-freeze">❄</span>
+                )
+              ) : clickable ? (
+                <span className="legal-dot" />
+              ) : null}
+            </div>
+          );
+        }),
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      legalSet,
+      racersByCell,
+      wallSet,
+      mineSet,
+      threatSet,
+      itemByCell,
+      ready,
+      me.id,
+      effBucket,
+    ],
+  );
+
+  const startedMs = room.startedAt ? room.startedAt.toDate().getTime() : 0;
+  const finishTime = (r: Racer) =>
+    r.finished ? formatTime(r.finishedAt.toDate().getTime() - startedMs) : "";
+
   const finishers = [...racers]
     .filter((r) => r.finished)
     .sort((a, b) => a.finishRank - b.finishRank);
@@ -169,64 +263,18 @@ export default function Board({
         {iAmQueen && <span className="queen-badge">♛ Queen!</span>}
       </div>
 
-      <div
-        className="board"
-        style={{ gridTemplateColumns: `repeat(${cols.length}, 1fr)` }}
-      >
-        {Array.from({ length: TRACK_ROWS }).map((_, row) =>
-          cols.map((col) => {
-            const key = cellKey(row, col);
-            const occupant = racersByCell.get(key);
-            const item = itemByCell.get(key);
-            const isLegal = legalSet.has(key);
-            const isMe = occupant?.id === me.id;
-            const isWall = wallSet.has(key);
-            const isMine = mineSet.has(key);
-            const isThreat = threatSet.has(key);
-            const isFinish = col === FINISH_COL;
-            const clickable = isLegal && ready;
-            return (
-              <div
-                key={key}
-                className={[
-                  "cell",
-                  (row + col) % 2 === 0 ? "cell-a" : "cell-b",
-                  isFinish ? "cell-finish" : "",
-                  isWall ? "cell-wall" : "",
-                  isThreat && !isWall ? "cell-threat" : "",
-                  clickable ? "cell-legal" : "",
-                ].join(" ")}
-                onClick={() => clickable && onMove(row, col)}
-              >
-                {occupant ? (
-                  <span
-                    className={`piece ${isMe ? "piece-me" : ""} ${
-                      effPiece(occupant) === "queen" ? "piece-queen" : ""
-                    }`}
-                    style={{ "--lane": laneColor(occupant) } as CSSProperties}
-                    title={occupant.name}
-                  >
-                    {GLYPHS[effPiece(occupant)] ?? "♟"}
-                  </span>
-                ) : isWall ? (
-                  <span className="wall-mark" />
-                ) : isMine ? (
-                  <span className="pawn-mark">♟</span>
-                ) : item ? (
-                  item.kind === "mine" ? (
-                    <span className="bomb item-mark" />
-                  ) : item.kind === "promotion" ? (
-                    <span className="item-mark item-promotion">♛</span>
-                  ) : (
-                    <span className="item-mark item-freeze">❄</span>
-                  )
-                ) : clickable ? (
-                  <span className="legal-dot" />
-                ) : null}
-              </div>
-            );
-          }),
-        )}
+      {/* Fixed viewport; the track strip slides smoothly via transform. */}
+      <div className="track-viewport">
+        <div
+          className="track-strip"
+          style={{
+            width: `${(TRACK_COLS / WINDOW) * 100}%`,
+            gridTemplateColumns: `repeat(${TRACK_COLS}, 1fr)`,
+            transform: `translateX(-${cameraCol}%)`,
+          }}
+        >
+          {cells}
+        </div>
       </div>
 
       <p className="muted fog-note">
@@ -259,6 +307,7 @@ export default function Board({
                   {GLYPHS[effPiece(r)] ?? "♟"}
                 </span>
               </div>
+              <span className="ladder-time">{finishTime(r)}</span>
             </div>
           ))}
       </div>
@@ -269,9 +318,10 @@ export default function Board({
           {finishers.map((r) => (
             <div className="result-row" key={r.id.toString()}>
               <span className="rank">#{r.finishRank}</span>
-              <span style={{ color: laneColor(r) }}>
+              <span className="result-name" style={{ color: laneColor(r) }}>
                 {GLYPHS[r.piece] ?? "♟"} {r.name}
               </span>
+              <span className="result-time">{finishTime(r)}</span>
             </div>
           ))}
         </div>

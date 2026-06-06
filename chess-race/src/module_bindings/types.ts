@@ -49,6 +49,7 @@ export const Racer = __t.object("Racer", {
   ready: __t.bool(),
   finished: __t.bool(),
   finishRank: __t.u32(),
+  finishedAt: __t.timestamp(),
   joinedAt: __t.timestamp(),
   lastMoveAt: __t.timestamp(),
   stunnedUntil: __t.timestamp(),

@@ -48,6 +48,12 @@ function tone(
   osc.stop(t0 + duration + 0.03);
 }
 
+// A satisfying "place" click for a move: a soft low thunk + a bright pluck.
+export function playMove() {
+  tone(180, 0, 0.07, "sine", 0.22);
+  tone(720, 0.015, 0.09, "triangle", 0.14);
+}
+
 // A short countdown blip (3… 2… 1…).
 export function playCountdownBeep() {
   tone(620, 0, 0.16, "triangle", 0.18);
