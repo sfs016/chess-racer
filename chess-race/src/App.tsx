@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import "./App.css";
+import Board from "./Board";
 import { tables, reducers } from "./module_bindings";
 import type { Racer, Room } from "./module_bindings/types";
 import { useSpacetimeDB, useTable, useReducer } from "spacetimedb/react";
@@ -10,7 +11,7 @@ const PIECES = [
   { id: "bishop", glyph: "♝", label: "Bishop" },
 ] as const;
 
-const TRACK_COLS = 100;
+const MOVE_COOLDOWN_MS = 600;
 const NAME_KEY = "chess_race_name";
 
 function glyphFor(piece: string): string {
@@ -58,6 +59,14 @@ function App() {
   const setReady = useReducer(reducers.setReady);
   const startRace = useReducer(reducers.startRace);
   const leaveRoom = useReducer(reducers.leaveRoom);
+  const submitMove = useReducer(reducers.submitMove);
+
+  // A ticking clock so the move cooldown counts down smoothly in the UI.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 80);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     if (name) safeSet(NAME_KEY, name);
@@ -168,9 +177,10 @@ function App() {
   const isHost = myRoom.host.isEqual(identity);
   const shareUrl = `${window.location.origin}${window.location.pathname}?r=${myRoom.code}`;
 
-  // Racing view (placeholder board — full canvas board lands in M2).
+  // Racing / results view.
   if (myRoom.status === "racing" || myRoom.status === "finished") {
-    const ladder = [...roomRacers].sort((a, b) => b.col - a.col);
+    const sinceLastMove = now - Number(myRacer.lastMoveAt.toDate().getTime());
+    const cooldownRemaining = Math.max(0, MOVE_COOLDOWN_MS - sinceLastMove);
     return (
       <div className="screen">
         <div className="race-header">
@@ -180,36 +190,13 @@ function App() {
             Leave
           </button>
         </div>
-        <div className="track-list">
-          {ladder.map((r) => (
-            <div className="track-row" key={r.id.toString()}>
-              <div className="track-label">
-                <span className="glyph">{glyphFor(r.piece)}</span>
-                {r.name}
-                {r.identity.isEqual(identity) && (
-                  <span className="you">you</span>
-                )}
-              </div>
-              <div className="track-bar">
-                <div
-                  className="track-fill"
-                  style={{ width: `${(r.col / (TRACK_COLS - 1)) * 100}%` }}
-                />
-                <span
-                  className="track-piece"
-                  style={{ left: `${(r.col / (TRACK_COLS - 1)) * 100}%` }}
-                >
-                  {glyphFor(r.piece)}
-                </span>
-              </div>
-              <div className="track-col">{r.col}</div>
-            </div>
-          ))}
-        </div>
-        <p className="muted center-text">
-          Movement arrives in M2 — this is the live position ladder, synced from
-          the server.
-        </p>
+        <Board
+          me={myRacer}
+          racers={roomRacers}
+          room={myRoom}
+          cooldownRemaining={cooldownRemaining}
+          onMove={(row, col) => run(submitMove({ toRow: row, toCol: col }))}
+        />
         {error && <p className="error">{error}</p>}
       </div>
     );

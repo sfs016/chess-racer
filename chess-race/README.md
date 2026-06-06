@@ -38,16 +38,16 @@ or reducers changed) `pnpm spacetime:generate`.
 
 ## Scripts
 
-| Command | What it does |
-| --- | --- |
-| `pnpm dev` | Vite dev server (client) |
-| `pnpm build` | Typecheck + production client build |
-| `pnpm test` | Vitest (render smoke test; no live DB needed) |
-| `pnpm lint` | ESLint + Prettier check |
-| `pnpm spacetime:build` | Build the server module |
-| `pnpm spacetime:generate` | Regenerate client bindings from the module |
-| `pnpm spacetime:publish:local` | Publish module to the local server |
-| `pnpm spacetime:publish` | Publish module to Maincloud |
+| Command                        | What it does                                  |
+| ------------------------------ | --------------------------------------------- |
+| `pnpm dev`                     | Vite dev server (client)                      |
+| `pnpm build`                   | Typecheck + production client build           |
+| `pnpm test`                    | Vitest (render smoke test; no live DB needed) |
+| `pnpm lint`                    | ESLint + Prettier check                       |
+| `pnpm spacetime:build`         | Build the server module                       |
+| `pnpm spacetime:generate`      | Regenerate client bindings from the module    |
+| `pnpm spacetime:publish:local` | Publish module to the local server            |
+| `pnpm spacetime:publish`       | Publish module to Maincloud                   |
 
 ## Milestones
 
