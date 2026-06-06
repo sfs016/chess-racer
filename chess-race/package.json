@@ -6,14 +6,15 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "format": "prettier . --write --ignore-path ../../.prettierignore",
-    "lint": "eslint . && prettier . --check --ignore-path ../../.prettierignore",
+    "format": "prettier . --write",
+    "lint": "eslint . && prettier . --check",
     "preview": "vite preview",
     "test": "vitest run",
-    "generate": "cargo run -p gen-bindings -- --out-dir src/module_bindings --module-path spacetimedb && prettier --write src/module_bindings",
+    "generate": "spacetime generate --lang typescript --out-dir src/module_bindings --module-path spacetimedb && prettier --write src/module_bindings",
     "spacetime:generate": "spacetime generate --lang typescript --out-dir src/module_bindings --module-path spacetimedb",
-    "spacetime:publish:local": "spacetime publish --module-path server --server local",
-    "spacetime:publish": "spacetime publish --module-path server --server maincloud"
+    "spacetime:build": "spacetime build --module-path spacetimedb",
+    "spacetime:publish:local": "spacetime publish --module-path spacetimedb --server local chess-race",
+    "spacetime:publish": "spacetime publish --module-path spacetimedb --server maincloud chess-race"
   },
   "dependencies": {
     "spacetimedb": "^2.4.1",

@@ -1,0 +1,8 @@
+dist
+node_modules
+pnpm-lock.yaml
+src/module_bindings
+spacetimedb/dist
+spacetimedb/node_modules
+spacetimedb/package-lock.json
+spacetimedb/pnpm-lock.yaml

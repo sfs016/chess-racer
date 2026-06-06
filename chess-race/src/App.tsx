@@ -1,233 +1,298 @@
-import React, { useState } from 'react';
-import './App.css';
-import { tables, reducers } from './module_bindings';
-import type * as Types from './module_bindings/types';
-import { useSpacetimeDB, useTable, useReducer } from 'spacetimedb/react';
-import { Identity, Timestamp } from 'spacetimedb';
+import React, { useEffect, useState } from "react";
+import "./App.css";
+import { tables, reducers } from "./module_bindings";
+import type { Racer, Room } from "./module_bindings/types";
+import { useSpacetimeDB, useTable, useReducer } from "spacetimedb/react";
 
-export type PrettyMessage = {
-  senderName: string;
-  text: string;
-  sent: Timestamp;
-  kind: 'system' | 'user';
-};
+const PIECES = [
+  { id: "rook", glyph: "♜", label: "Rook" },
+  { id: "knight", glyph: "♞", label: "Knight" },
+  { id: "bishop", glyph: "♝", label: "Bishop" },
+] as const;
+
+const TRACK_COLS = 100;
+const NAME_KEY = "chess_race_name";
+
+function glyphFor(piece: string): string {
+  return PIECES.find((p) => p.id === piece)?.glyph ?? "♟";
+}
+
+// localStorage can throw (private mode, opaque origins in tests) — guard it.
+function safeGet(key: string): string {
+  try {
+    return localStorage.getItem(key) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function safeSet(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* ignore */
+  }
+}
+
+// Read a room code from the share URL (?r=CODE), if present.
+function roomCodeFromUrl(): string {
+  const params = new URLSearchParams(window.location.search);
+  return (params.get("r") ?? "").toUpperCase();
+}
 
 function App() {
-  const [newName, setNewName] = useState('');
-  const [settingName, setSettingName] = useState(false);
-  const [systemMessages, setSystemMessages] = useState([] as Types.Message[]);
-  const [newMessage, setNewMessage] = useState('');
-
   const { identity, isActive: connected } = useSpacetimeDB();
-  const setName = useReducer(reducers.setName);
-  const sendMessage = useReducer(reducers.sendMessage);
 
-  // Subscribe to all messages in the chat
-  const [messages] = useTable(tables.message);
+  // useTable auto-subscribes; for the lobby the row counts are tiny.
+  const [rooms] = useTable(tables.room);
+  const [racers] = useTable(tables.racer);
 
-  // Subscribe to all online users in the chat
-  const [onlineUsers] = useTable(
-    tables.user.where(r => r.online.eq(true)),
-    {
-      onInsert: user => {
-        // All users being inserted here are online
-        const name = user.name || user.identity.toHexString().substring(0, 8);
-        setSystemMessages(prev => [
-          ...prev,
-          {
-            sender: Identity.zero(),
-            text: `${name} has connected.`,
-            sent: Timestamp.now(),
-          },
-        ]);
-      },
-      onDelete: user => {
-        // All users being deleted here are offline
-        const name = user.name || user.identity.toHexString().substring(0, 8);
-        setSystemMessages(prev => [
-          ...prev,
-          {
-            sender: Identity.zero(),
-            text: `${name} has disconnected.`,
-            sent: Timestamp.now(),
-          },
-        ]);
-      },
-    }
-  );
+  const [name, setName] = useState(() => safeGet(NAME_KEY));
+  const [piece, setPiece] = useState<string>("rook");
+  const [joinCode, setJoinCode] = useState(() => roomCodeFromUrl());
+  const [error, setError] = useState<string | null>(null);
 
-  const [offlineUsers] = useTable(tables.user.where(r => r.online.eq(false)));
-  const users = [...onlineUsers, ...offlineUsers];
+  const createRoom = useReducer(reducers.createRoom);
+  const joinRoom = useReducer(reducers.joinRoom);
+  const setPieceReducer = useReducer(reducers.setPiece);
+  const setReady = useReducer(reducers.setReady);
+  const startRace = useReducer(reducers.startRace);
+  const leaveRoom = useReducer(reducers.leaveRoom);
 
-  const prettyMessages: PrettyMessage[] = messages
-    .concat(systemMessages)
-    .sort((a, b) => (a.sent.toDate() > b.sent.toDate() ? 1 : -1))
-    .map(message => {
-      const user = users.find(
-        u => u.identity.toHexString() === message.sender.toHexString()
-      );
-      return {
-        senderName: user?.name || message.sender.toHexString().substring(0, 8),
-        text: message.text,
-        sent: message.sent,
-        kind: Identity.zero().isEqual(message.sender) ? 'system' : 'user',
-      };
-    });
+  useEffect(() => {
+    if (name) safeSet(NAME_KEY, name);
+  }, [name]);
 
-  console.log('connected:', connected, 'identity:', identity?.toHexString());
+  // Surface reducer errors briefly.
+  const run = (p: Promise<unknown>) => {
+    setError(null);
+    p.catch((e: unknown) =>
+      setError(e instanceof Error ? e.message : String(e)),
+    );
+  };
 
   if (!connected || !identity) {
     return (
-      <div className="App">
-        <h1>Connecting...</h1>
+      <div className="screen center">
+        <div className="logo">♞ Chess Race</div>
+        <p className="muted">Connecting…</p>
       </div>
     );
   }
 
-  const name = (() => {
-    const user = users.find(u => u.identity.isEqual(identity));
-    return user?.name || identity?.toHexString().substring(0, 8) || '';
-  })();
+  const myRacer: Racer | undefined = racers.find((r) =>
+    r.identity.isEqual(identity),
+  );
+  const myRoom: Room | undefined = myRacer
+    ? rooms.find((r) => r.code === myRacer.roomCode)
+    : undefined;
 
-  const onSubmitNewName = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    setSettingName(false);
-    setName({ name: newName });
-  };
+  // ── Home: not in a room yet ────────────────────────────────────────────────
+  if (!myRacer || !myRoom) {
+    const canSubmit = name.trim().length > 0;
+    return (
+      <div className="screen center">
+        <div className="logo">♞ Chess Race</div>
+        <p className="tagline">
+          Race a chess piece down a 100-tile track. Move by your piece's rules.
+          Block, dodge, win.
+        </p>
 
-  const onSubmitMessage = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    setNewMessage('');
-    sendMessage({ text: newMessage })
-      .then(() => {
-        console.log('Message sent.');
-      })
-      .catch(err => {
-        console.error('Error sending message:', err);
-      });
-  };
-
-  return (
-    <div className="App">
-      <div className="profile">
-        <h1>Profile</h1>
-        {!settingName ? (
-          <>
-            <p>{name}</p>
-            <button
-              onClick={() => {
-                setSettingName(true);
-                setNewName(name);
-              }}
-            >
-              Edit Name
-            </button>
-          </>
-        ) : (
-          <form onSubmit={onSubmitNewName}>
+        <div className="card">
+          <label className="field">
+            <span>Display name</span>
             <input
-              type="text"
-              aria-label="username input"
-              value={newName}
-              onChange={e => setNewName(e.target.value)}
+              value={name}
+              maxLength={20}
+              placeholder="Your name"
+              onChange={(e) => setName(e.target.value)}
             />
-            <button type="submit">Submit</button>
-          </form>
-        )}
-      </div>
-      <div className="message-panel">
-        <h1>Messages</h1>
-        {prettyMessages.length < 1 && <p>No messages</p>}
-        <div className="messages">
-          {prettyMessages.map((message, key) => {
-            const sentDate = message.sent.toDate();
-            const now = new Date();
-            const isOlderThanDay =
-              now.getFullYear() !== sentDate.getFullYear() ||
-              now.getMonth() !== sentDate.getMonth() ||
-              now.getDate() !== sentDate.getDate();
+          </label>
 
-            const timeString = sentDate.toLocaleTimeString([], {
-              hour: '2-digit',
-              minute: '2-digit',
-            });
-            const dateString = isOlderThanDay
-              ? sentDate.toLocaleDateString([], {
-                  year: 'numeric',
-                  month: 'short',
-                  day: 'numeric',
-                }) + ' '
-              : '';
+          <div className="field">
+            <span>Piece</span>
+            <div className="piece-row">
+              {PIECES.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  className={`piece-btn ${piece === p.id ? "selected" : ""}`}
+                  onClick={() => setPiece(p.id)}
+                >
+                  <span className="glyph">{p.glyph}</span>
+                  <span>{p.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
 
-            return (
-              <div
-                key={key}
-                className={
-                  message.kind === 'system' ? 'system-message' : 'user-message'
-                }
-              >
-                <p>
-                  <b>
-                    {message.kind === 'system' ? 'System' : message.senderName}
-                  </b>
-                  <span
-                    style={{
-                      fontSize: '0.8rem',
-                      marginLeft: '0.5rem',
-                      color: '#666',
-                    }}
-                  >
-                    {dateString}
-                    {timeString}
-                  </span>
-                </p>
-                <p>{message.text}</p>
-              </div>
-            );
-          })}
+          <button
+            className="primary"
+            disabled={!canSubmit}
+            onClick={() => run(createRoom({ name: name.trim(), piece }))}
+          >
+            Create Room
+          </button>
+
+          <div className="divider">or join with a code</div>
+
+          <div className="join-row">
+            <input
+              className="code-input"
+              value={joinCode}
+              maxLength={4}
+              placeholder="ABCD"
+              onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+            />
+            <button
+              className="secondary"
+              disabled={!canSubmit || joinCode.length < 4}
+              onClick={() =>
+                run(joinRoom({ code: joinCode, name: name.trim(), piece }))
+              }
+            >
+              Join
+            </button>
+          </div>
         </div>
+
+        {error && <p className="error">{error}</p>}
       </div>
-      <div className="online" style={{ whiteSpace: 'pre-wrap' }}>
-        <h1>Online</h1>
-        <div>
-          {onlineUsers.map((user, key) => (
-            <div key={key}>
-              <p>{user.name || user.identity.toHexString().substring(0, 8)}</p>
+    );
+  }
+
+  // ── In a room ──────────────────────────────────────────────────────────────
+  const roomRacers = racers
+    .filter((r) => r.roomCode === myRoom.code)
+    .sort((a, b) => (a.joinedAt.toDate() > b.joinedAt.toDate() ? 1 : -1));
+  const isHost = myRoom.host.isEqual(identity);
+  const shareUrl = `${window.location.origin}${window.location.pathname}?r=${myRoom.code}`;
+
+  // Racing view (placeholder board — full canvas board lands in M2).
+  if (myRoom.status === "racing" || myRoom.status === "finished") {
+    const ladder = [...roomRacers].sort((a, b) => b.col - a.col);
+    return (
+      <div className="screen">
+        <div className="race-header">
+          <div className="logo small">♞ Chess Race</div>
+          <span className="muted">Room {myRoom.code}</span>
+          <button className="ghost" onClick={() => run(leaveRoom())}>
+            Leave
+          </button>
+        </div>
+        <div className="track-list">
+          {ladder.map((r) => (
+            <div className="track-row" key={r.id.toString()}>
+              <div className="track-label">
+                <span className="glyph">{glyphFor(r.piece)}</span>
+                {r.name}
+                {r.identity.isEqual(identity) && (
+                  <span className="you">you</span>
+                )}
+              </div>
+              <div className="track-bar">
+                <div
+                  className="track-fill"
+                  style={{ width: `${(r.col / (TRACK_COLS - 1)) * 100}%` }}
+                />
+                <span
+                  className="track-piece"
+                  style={{ left: `${(r.col / (TRACK_COLS - 1)) * 100}%` }}
+                >
+                  {glyphFor(r.piece)}
+                </span>
+              </div>
+              <div className="track-col">{r.col}</div>
             </div>
           ))}
         </div>
-        {offlineUsers.length > 0 && (
-          <div>
-            <h1>Offline</h1>
-            {offlineUsers.map((user, key) => (
-              <div key={key}>
-                <p>
-                  {user.name || user.identity.toHexString().substring(0, 8)}
-                </p>
-              </div>
+        <p className="muted center-text">
+          Movement arrives in M2 — this is the live position ladder, synced from
+          the server.
+        </p>
+        {error && <p className="error">{error}</p>}
+      </div>
+    );
+  }
+
+  // Lobby view.
+  return (
+    <div className="screen center">
+      <div className="logo small">♞ Chess Race</div>
+      <div className="card">
+        <div className="room-code">
+          <span className="muted">Room code</span>
+          <div className="code-big">{myRoom.code}</div>
+          <button
+            className="ghost"
+            onClick={() => navigator.clipboard?.writeText(shareUrl)}
+          >
+            Copy invite link
+          </button>
+        </div>
+
+        <div className="roster">
+          {roomRacers.map((r) => (
+            <div className="roster-row" key={r.id.toString()}>
+              <span className="glyph">{glyphFor(r.piece)}</span>
+              <span className="roster-name">
+                {r.name}
+                {r.identity.isEqual(identity) && (
+                  <span className="you">you</span>
+                )}
+                {r.identity.isEqual(myRoom.host) && (
+                  <span className="host">host</span>
+                )}
+              </span>
+              <span className={`dot ${r.online ? "on" : "off"}`} />
+              <span className={`ready ${r.ready ? "is-ready" : ""}`}>
+                {r.ready ? "Ready" : "…"}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        <div className="field">
+          <span>Your piece</span>
+          <div className="piece-row">
+            {PIECES.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                className={`piece-btn ${
+                  myRacer.piece === p.id ? "selected" : ""
+                }`}
+                onClick={() => run(setPieceReducer({ piece: p.id }))}
+              >
+                <span className="glyph">{p.glyph}</span>
+                <span>{p.label}</span>
+              </button>
             ))}
           </div>
-        )}
+        </div>
+
+        <div className="lobby-actions">
+          <button
+            className={myRacer.ready ? "secondary" : "primary"}
+            onClick={() => run(setReady({ ready: !myRacer.ready }))}
+          >
+            {myRacer.ready ? "Not ready" : "Ready"}
+          </button>
+          {isHost && (
+            <button
+              className="primary"
+              disabled={roomRacers.length < 1}
+              onClick={() => run(startRace({ code: myRoom.code }))}
+            >
+              Start Race
+            </button>
+          )}
+          <button className="ghost" onClick={() => run(leaveRoom())}>
+            Leave
+          </button>
+        </div>
       </div>
-      <div className="new-message">
-        <form
-          onSubmit={onSubmitMessage}
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            width: '50%',
-            margin: '0 auto',
-          }}
-        >
-          <h3>New Message</h3>
-          <textarea
-            aria-label="message input"
-            value={newMessage}
-            onChange={e => setNewMessage(e.target.value)}
-          ></textarea>
-          <button type="submit">Send</button>
-        </form>
-      </div>
+      {error && <p className="error">{error}</p>}
     </div>
   );
 }

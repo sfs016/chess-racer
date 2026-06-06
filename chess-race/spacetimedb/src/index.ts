@@ -15,30 +15,28 @@ import {
   SenderError,
   type ReducerCtx,
   type InferSchema,
-} from 'spacetimedb/server';
+} from "spacetimedb/server";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 // NOTE: a SpacetimeDB module may only export spacetime artifacts (reducers,
 // lifecycle hooks, the default schema). Plain constants must stay un-exported.
-const TRACK_COLS = 100; // race length (finish line at col TRACK_COLS - 1)
 const TRACK_ROWS = 10; // lanes
 const MAX_RACERS = 8; // human + bot cap per room
 
-const PIECES = ['rook', 'knight', 'bishop'] as const;
+const PIECES = ["rook", "knight", "bishop"] as const;
 type Piece = (typeof PIECES)[number];
 
-// Room lifecycle: lobby -> countdown -> racing -> finished
-const ROOM_STATUSES = ['lobby', 'countdown', 'racing', 'finished'] as const;
+// Room lifecycle (string column on `room`): lobby -> countdown -> racing -> finished
 
 // Room-code alphabet: no I/O/0/1 to avoid ambiguity when sharing codes.
-const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const CODE_LENGTH = 4;
 
 // ── Tables ───────────────────────────────────────────────────────────────────
 
 // One row per active race room. `code` is the shareable room code.
 const room = table(
-  { name: 'room', public: true },
+  { name: "room", public: true },
   {
     code: t.string().primaryKey(),
     status: t.string(), // one of ROOM_STATUSES
@@ -46,16 +44,16 @@ const room = table(
     host: t.identity(), // who created the room (may start the race)
     createdAt: t.timestamp(),
     startedAt: t.timestamp().optional(),
-  }
+  },
 );
 
 // One row per racer (human or, later, bot) currently in a room.
 const racer = table(
-  { name: 'racer', public: true },
+  { name: "racer", public: true },
   {
     id: t.u64().primaryKey().autoInc(),
-    identity: t.identity().index('btree'), // owner; zero-identity for bots later
-    roomCode: t.string().index('btree'),
+    identity: t.identity().index("btree"), // owner; zero-identity for bots later
+    roomCode: t.string().index("btree"),
     name: t.string(),
     piece: t.string(), // current piece (rook | knight | bishop | queen when promoted)
     row: t.u32(), // lane, 0..TRACK_ROWS-1
@@ -66,7 +64,7 @@ const racer = table(
     finished: t.bool(),
     finishRank: t.u32(), // 0 until finished, then 1-based placement
     joinedAt: t.timestamp(),
-  }
+  },
 );
 
 const spacetimedb = schema({ room, racer });
@@ -79,8 +77,9 @@ type Ctx = ReducerCtx<InferSchema<typeof spacetimedb>>;
 
 function validateName(name: string): string {
   const trimmed = name.trim();
-  if (!trimmed) throw new SenderError('Name must not be empty');
-  if (trimmed.length > 20) throw new SenderError('Name must be 20 characters or fewer');
+  if (!trimmed) throw new SenderError("Name must not be empty");
+  if (trimmed.length > 20)
+    throw new SenderError("Name must be 20 characters or fewer");
   return trimmed;
 }
 
@@ -95,22 +94,25 @@ function validatePiece(piece: string): Piece {
 // so randomness comes from ctx.random (seeded per call by the host).
 function generateRoomCode(ctx: Ctx): string {
   for (let attempt = 0; attempt < 25; attempt++) {
-    let code = '';
+    let code = "";
     for (let i = 0; i < CODE_LENGTH; i++) {
-      code += CODE_ALPHABET[ctx.random.integerInRange(0, CODE_ALPHABET.length - 1)];
+      code +=
+        CODE_ALPHABET[ctx.random.integerInRange(0, CODE_ALPHABET.length - 1)];
     }
     if (!ctx.db.room.code.find(code)) return code;
   }
-  throw new SenderError('Could not allocate a room code, please try again');
+  throw new SenderError("Could not allocate a room code, please try again");
 }
 
 // Lowest unused lane in a room, or throw if the room is full.
 function nextFreeLane(ctx: Ctx, code: string): number {
-  const used = new Set([...ctx.db.racer.roomCode.filter(code)].map(r => r.row));
+  const used = new Set(
+    [...ctx.db.racer.roomCode.filter(code)].map((r) => r.row),
+  );
   for (let row = 0; row < TRACK_ROWS; row++) {
     if (!used.has(row)) return row;
   }
-  throw new SenderError('Room is full');
+  throw new SenderError("Room is full");
 }
 
 function racersInRoom(ctx: Ctx, code: string) {
@@ -148,7 +150,7 @@ export const createRoom = spacetimedb.reducer(
     const code = generateRoomCode(ctx);
     ctx.db.room.insert({
       code,
-      status: 'lobby',
+      status: "lobby",
       seed: ctx.random.integerInRange(1, 0x7fffffff),
       host: ctx.sender,
       createdAt: ctx.timestamp,
@@ -170,7 +172,7 @@ export const createRoom = spacetimedb.reducer(
       finishRank: 0,
       joinedAt: ctx.timestamp,
     });
-  }
+  },
 );
 
 // Join an existing room in its lobby phase.
@@ -182,8 +184,10 @@ export const joinRoom = spacetimedb.reducer(
 
     const room = ctx.db.room.code.find(code);
     if (!room) throw new SenderError(`No room with code ${code}`);
-    if (room.status !== 'lobby') throw new SenderError('Race has already started');
-    if (racersInRoom(ctx, code).length >= MAX_RACERS) throw new SenderError('Room is full');
+    if (room.status !== "lobby")
+      throw new SenderError("Race has already started");
+    if (racersInRoom(ctx, code).length >= MAX_RACERS)
+      throw new SenderError("Room is full");
 
     removeCallerRacers(ctx);
     const lane = nextFreeLane(ctx, code);
@@ -203,7 +207,7 @@ export const joinRoom = spacetimedb.reducer(
       finishRank: 0,
       joinedAt: ctx.timestamp,
     });
-  }
+  },
 );
 
 // Change piece while still in the lobby.
@@ -212,11 +216,12 @@ export const setPiece = spacetimedb.reducer(
   (ctx, { piece }) => {
     const cleanPiece = validatePiece(piece);
     const mine = [...ctx.db.racer.identity.filter(ctx.sender)][0];
-    if (!mine) throw new SenderError('You are not in a room');
+    if (!mine) throw new SenderError("You are not in a room");
     const room = ctx.db.room.code.find(mine.roomCode);
-    if (room && room.status !== 'lobby') throw new SenderError('Race already started');
+    if (room && room.status !== "lobby")
+      throw new SenderError("Race already started");
     ctx.db.racer.id.update({ ...mine, piece: cleanPiece });
-  }
+  },
 );
 
 // Toggle the caller's ready flag in the lobby.
@@ -224,9 +229,9 @@ export const setReady = spacetimedb.reducer(
   { ready: t.bool() },
   (ctx, { ready }) => {
     const mine = [...ctx.db.racer.identity.filter(ctx.sender)][0];
-    if (!mine) throw new SenderError('You are not in a room');
+    if (!mine) throw new SenderError("You are not in a room");
     ctx.db.racer.id.update({ ...mine, ready });
-  }
+  },
 );
 
 // Host starts the race. Resets everyone to the starting line.
@@ -235,37 +240,42 @@ export const startRace = spacetimedb.reducer(
   (ctx, { code }) => {
     const room = ctx.db.room.code.find(code);
     if (!room) throw new SenderError(`No room with code ${code}`);
-    if (!room.host.equals(ctx.sender)) throw new SenderError('Only the host can start the race');
-    if (room.status !== 'lobby') throw new SenderError('Race already started');
+    if (!room.host.equals(ctx.sender))
+      throw new SenderError("Only the host can start the race");
+    if (room.status !== "lobby") throw new SenderError("Race already started");
 
     for (const r of racersInRoom(ctx, code)) {
       ctx.db.racer.id.update({ ...r, col: 0, finished: false, finishRank: 0 });
     }
-    ctx.db.room.code.update({ ...room, status: 'racing', startedAt: ctx.timestamp });
-  }
+    ctx.db.room.code.update({
+      ...room,
+      status: "racing",
+      startedAt: ctx.timestamp,
+    });
+  },
 );
 
 // Leave the current room.
-export const leaveRoom = spacetimedb.reducer(ctx => {
+export const leaveRoom = spacetimedb.reducer((ctx) => {
   removeCallerRacers(ctx);
 });
 
 // ── Lifecycle ────────────────────────────────────────────────────────────────
 
-export const init = spacetimedb.init(_ctx => {});
+export const init = spacetimedb.init(() => {});
 
 // Mark the caller's racer online when they (re)connect.
-export const onConnect = spacetimedb.clientConnected(ctx => {
+export const onConnect = spacetimedb.clientConnected((ctx) => {
   for (const r of [...ctx.db.racer.identity.filter(ctx.sender)]) {
     ctx.db.racer.id.update({ ...r, online: true });
   }
 });
 
 // Mark offline on disconnect; drop them from the lobby if the race hasn't begun.
-export const onDisconnect = spacetimedb.clientDisconnected(ctx => {
+export const onDisconnect = spacetimedb.clientDisconnected((ctx) => {
   for (const r of [...ctx.db.racer.identity.filter(ctx.sender)]) {
     const room = ctx.db.room.code.find(r.roomCode);
-    if (room && room.status === 'lobby') {
+    if (room && room.status === "lobby") {
       ctx.db.racer.id.delete(r.id);
       cleanupRoomIfEmpty(ctx, r.roomCode);
     } else {
