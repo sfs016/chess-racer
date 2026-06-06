@@ -27,4 +27,6 @@ export default __t.row({
   joinedAt: __t.timestamp().name("joined_at"),
   lastMoveAt: __t.timestamp().name("last_move_at"),
   stunnedUntil: __t.timestamp().name("stunned_until"),
+  heldItem: __t.string().name("held_item"),
+  promotedUntil: __t.timestamp().name("promoted_until"),
 });

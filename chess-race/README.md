@@ -59,5 +59,7 @@ or reducers changed) `pnpm spacetime:generate`.
       movement rules, mine capture + knockback/stun, board hazard rendering.
 - [x] **M4** — Quick Play + rule-based bots (greedy/cautious/wild) driven by a
       scheduled `botTick`; bot-aware room teardown when the last human leaves.
-- [ ] **M5** — Items (promotion / freeze / mine), fog polish, sound, animation.
+- [x] **M5** — Items (promotion → Queen, freeze the leader, drop a mine) with
+      track pickups; board polish (fixed camera, higher contrast, disc sprites).
+- [ ] **M5+** — Sound + animation polish (optional).
 - [ ] **M6** — Deploy: Maincloud backend + static frontend.

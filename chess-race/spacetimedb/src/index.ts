@@ -7,8 +7,8 @@
 //
 // Implemented: lobby (rooms/racers/lanes), authoritative slide movement with a
 // cooldown, a procedurally-generated track of walls + pawn mines, quick-play,
-// and rule-based bots driven by a scheduled tick.
-// Still to come: items, deploy.
+// rule-based bots driven by a scheduled tick, and items (promotion/freeze/mine).
+// Still to come: deploy.
 // ─────────────────────────────────────────────────────────────────────────────
 import {
   schema,
@@ -33,6 +33,13 @@ const MOVE_COOLDOWN_MICROS = 600_000n; // 0.6s between moves (PRD: 500–700ms)
 const SAFE_COLS = 3; // columns near the start kept clear of hazards
 const MINE_KNOCKBACK = 3; // tiles a triggered pawn mine knocks you back
 const STUN_MICROS = 1_500_000n; // 1.5s stun after triggering a mine
+
+// Items (string `kind` on item_spawn, and racer.heldItem):
+//   "promotion" — become a Queen for PROMOTION_MICROS
+//   "freeze"    — freeze the current leader for FREEZE_MICROS
+//   "mine"      — drop a pawn mine one tile behind you
+const PROMOTION_MICROS = 8_000_000n; // 8s as a Queen
+const FREEZE_MICROS = 3_000_000n; // 3s frozen
 
 const MIN_RACERS = 4; // fill with bots up to this many at race start
 // Bots tick slower than the human move cooldown (0.6s) so an attentive human
@@ -98,7 +105,9 @@ const racer = table(
     finishRank: t.u32(), // 0 until finished, then 1-based placement
     joinedAt: t.timestamp(),
     lastMoveAt: t.timestamp(), // for the per-move cooldown
-    stunnedUntil: t.timestamp(), // mine stun; no moves until this time
+    stunnedUntil: t.timestamp(), // mine stun / freeze; no moves until this time
+    heldItem: t.string(), // "" or one of the item kinds
+    promotedUntil: t.timestamp(), // Queen movement until this time (promotion)
   },
 );
 
@@ -114,6 +123,18 @@ const obstacle = table(
   },
 );
 
+// One row per item pickup on a room's track.
+const itemSpawn = table(
+  { name: "item_spawn", public: true },
+  {
+    id: t.u64().primaryKey().autoInc(),
+    roomCode: t.string().index("btree"),
+    row: t.u32(),
+    col: t.u32(),
+    kind: t.string(), // "promotion" | "freeze" | "mine"
+  },
+);
+
 // A repeating scheduled timer that drives bot moves. One row, inserted at init;
 // SpacetimeDB calls `botTick` every BOT_TICK_MICROS.
 const botTimer = table(
@@ -124,7 +145,7 @@ const botTimer = table(
   },
 );
 
-const spacetimedb = schema({ room, racer, obstacle, botTimer });
+const spacetimedb = schema({ room, racer, obstacle, itemSpawn, botTimer });
 export default spacetimedb;
 
 // Reducer context typed against this module's schema (gives us ctx.db.room etc).
@@ -196,6 +217,9 @@ function cleanupRoomIfNoHumans(ctx: Ctx, code: string) {
   for (const o of [...ctx.db.obstacle.roomCode.filter(code)]) {
     ctx.db.obstacle.id.delete(o.id);
   }
+  for (const s of [...ctx.db.itemSpawn.roomCode.filter(code)]) {
+    ctx.db.itemSpawn.id.delete(s.id);
+  }
   const room = ctx.db.room.code.find(code);
   if (room) ctx.db.room.code.delete(code);
 }
@@ -225,6 +249,8 @@ function seatHuman(
     joinedAt: ctx.timestamp,
     lastMoveAt: ctx.timestamp,
     stunnedUntil: ctx.timestamp,
+    heldItem: "",
+    promotedUntil: ctx.timestamp,
   });
 }
 
@@ -242,6 +268,11 @@ type Blockers = Map<string, "wall" | "racer" | "mine">;
 
 function cellKey(row: number, col: number): string {
   return `${row},${col}`;
+}
+
+// A racer moves as a Queen while promotion is active, otherwise as its piece.
+function effectivePiece(r: RacerRow, nowMicros: bigint): string {
+  return nowMicros < r.promotedUntil.microsSinceUnixEpoch ? "queen" : r.piece;
 }
 
 // All legal destination tiles for a piece given the blocker map. Movement is
@@ -329,6 +360,9 @@ function generateTrack(ctx: Ctx, code: string, seed: number) {
   for (const o of [...ctx.db.obstacle.roomCode.filter(code)]) {
     ctx.db.obstacle.id.delete(o.id);
   }
+  for (const s of [...ctx.db.itemSpawn.roomCode.filter(code)]) {
+    ctx.db.itemSpawn.id.delete(s.id);
+  }
 
   const rng = mulberry32(seed);
   const used = new Set<string>();
@@ -364,6 +398,18 @@ function generateTrack(ctx: Ctx, code: string, seed: number) {
     }
     if (rng() < mineChance) {
       place(Math.floor(rng() * TRACK_ROWS), col, "pawn_mine");
+    }
+
+    // Item pickups (midgame onward): mostly mines, some freeze, rare promotion.
+    if (col >= 20 && rng() < 0.07) {
+      const row = Math.floor(rng() * TRACK_ROWS);
+      if (!used.has(cellKey(row, col))) {
+        used.add(cellKey(row, col));
+        const roll = rng();
+        const kind =
+          roll < 0.55 ? "mine" : roll < 0.85 ? "freeze" : "promotion";
+        ctx.db.itemSpawn.insert({ id: 0n, roomCode: code, row, col, kind });
+      }
     }
   }
 }
@@ -420,6 +466,18 @@ function applyMove(ctx: Ctx, mover: RacerRow, toRow: number, toCol: number) {
     }
   }
 
+  // Pick up an item on the landed tile (one held item at a time).
+  let heldItem = mover.heldItem;
+  if (heldItem === "") {
+    const spawn = [...ctx.db.itemSpawn.roomCode.filter(mover.roomCode)].find(
+      (s) => s.row === toRow && s.col === toCol,
+    );
+    if (spawn) {
+      heldItem = spawn.kind;
+      ctx.db.itemSpawn.id.delete(spawn.id);
+    }
+  }
+
   const finished = finalCol >= FINISH_COL;
   const finishRank = finished
     ? racersInRoom(ctx, mover.roomCode).filter((r) => r.finished).length + 1
@@ -431,6 +489,7 @@ function applyMove(ctx: Ctx, mover: RacerRow, toRow: number, toCol: number) {
     col: finalCol,
     lastMoveAt: ctx.timestamp,
     stunnedUntil,
+    heldItem,
     finished,
     finishRank,
   });
@@ -442,6 +501,49 @@ function applyMove(ctx: Ctx, mover: RacerRow, toRow: number, toCol: number) {
     racersInRoom(ctx, mover.roomCode).every((r) => r.finished)
   ) {
     ctx.db.room.code.update({ ...room, status: "finished" });
+  }
+}
+
+// Use the racer's held item. Shared by the useItem reducer (humans) and botTick.
+function applyItem(ctx: Ctx, user: RacerRow) {
+  const now = ctx.timestamp.microsSinceUnixEpoch;
+
+  if (user.heldItem === "promotion") {
+    ctx.db.racer.id.update({
+      ...user,
+      heldItem: "",
+      promotedUntil: new Timestamp(now + PROMOTION_MICROS),
+    });
+  } else if (user.heldItem === "freeze") {
+    // Freeze the current leader (furthest ahead, not the user, not finished).
+    let leader: RacerRow | undefined;
+    for (const r of ctx.db.racer.roomCode.filter(user.roomCode)) {
+      if (r.id === user.id || r.finished) continue;
+      if (!leader || r.col > leader.col) leader = r;
+    }
+    if (leader) {
+      ctx.db.racer.id.update({
+        ...leader,
+        stunnedUntil: new Timestamp(now + FREEZE_MICROS),
+      });
+    }
+    ctx.db.racer.id.update({ ...user, heldItem: "" });
+  } else if (user.heldItem === "mine") {
+    // Drop a pawn mine one tile behind, if that tile is free.
+    const dropCol = Math.max(0, user.col - 1);
+    const blocked = [...ctx.db.obstacle.roomCode.filter(user.roomCode)].some(
+      (o) => o.row === user.row && o.col === dropCol,
+    );
+    if (!blocked) {
+      ctx.db.obstacle.insert({
+        id: 0n,
+        roomCode: user.roomCode,
+        row: user.row,
+        col: dropCol,
+        kind: "pawn_mine",
+      });
+    }
+    ctx.db.racer.id.update({ ...user, heldItem: "" });
   }
 }
 
@@ -510,6 +612,8 @@ function fillBots(ctx: Ctx, code: string) {
       joinedAt: ctx.timestamp,
       lastMoveAt: ctx.timestamp,
       stunnedUntil: ctx.timestamp,
+      heldItem: "",
+      promotedUntil: ctx.timestamp,
     });
   }
 }
@@ -563,6 +667,8 @@ export const createRoom = spacetimedb.reducer(
       joinedAt: ctx.timestamp,
       lastMoveAt: ctx.timestamp,
       stunnedUntil: ctx.timestamp,
+      heldItem: "",
+      promotedUntil: ctx.timestamp,
     });
   },
 );
@@ -601,6 +707,8 @@ export const joinRoom = spacetimedb.reducer(
       joinedAt: ctx.timestamp,
       lastMoveAt: ctx.timestamp,
       stunnedUntil: ctx.timestamp,
+      heldItem: "",
+      promotedUntil: ctx.timestamp,
     });
   },
 );
@@ -651,6 +759,8 @@ export const startRace = spacetimedb.reducer(
         finishRank: 0,
         lastMoveAt: ctx.timestamp, // cooldown counts from the start
         stunnedUntil: ctx.timestamp,
+        heldItem: "",
+        promotedUntil: ctx.timestamp,
       });
     }
     ctx.db.room.code.update({
@@ -684,7 +794,8 @@ export const submitMove = spacetimedb.reducer(
       throw new SenderError("Move is on cooldown");
 
     const blockers = buildBlockers(ctx, me.roomCode, me.id);
-    const legal = legalTargets(me.piece, me.row, me.col, blockers);
+    const piece = effectivePiece(me, nowMicros);
+    const legal = legalTargets(piece, me.row, me.col, blockers);
     if (!legal.some((c) => c.row === toRow && c.col === toCol)) {
       throw new SenderError("Illegal move");
     }
@@ -692,6 +803,18 @@ export const submitMove = spacetimedb.reducer(
     applyMove(ctx, me, toRow, toCol);
   },
 );
+
+// Use the caller's held item (promotion / freeze / mine).
+export const useItem = spacetimedb.reducer((ctx) => {
+  const me = [...ctx.db.racer.identity.filter(ctx.sender)][0];
+  if (!me) throw new SenderError("You are not in a room");
+  const room = ctx.db.room.code.find(me.roomCode);
+  if (!room || room.status !== "racing")
+    throw new SenderError("Race is not in progress");
+  if (me.finished) throw new SenderError("You have already finished");
+  if (me.heldItem === "") throw new SenderError("You have no item");
+  applyItem(ctx, me);
+});
 
 // Quick Play: seat the caller in the newest joinable lobby, or open a fresh room
 // if none is available.
@@ -754,12 +877,15 @@ export const botTick = spacetimedb.reducer(
         if (now - bot.lastMoveAt.microsSinceUnixEpoch < MOVE_COOLDOWN_MICROS)
           continue;
 
-        // Re-read in case an earlier bot in this tick changed occupancy.
+        // Bots use a held item immediately (re-read afterwards since it mutates).
+        if (bot.heldItem !== "") applyItem(ctx, bot);
+
+        // Re-read in case an earlier bot in this tick (or the item) changed state.
         const current = ctx.db.racer.id.find(bot.id);
         if (!current) continue;
         const blockers = buildBlockers(ctx, room.code, current.id);
         const legal = legalTargets(
-          current.piece,
+          effectivePiece(current, now),
           current.row,
           current.col,
           blockers,

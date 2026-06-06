@@ -16,6 +16,15 @@ export const BotTimer = __t.object("BotTimer", {
 });
 export type BotTimer = __Infer<typeof BotTimer>;
 
+export const ItemSpawn = __t.object("ItemSpawn", {
+  id: __t.u64(),
+  roomCode: __t.string(),
+  row: __t.u32(),
+  col: __t.u32(),
+  kind: __t.string(),
+});
+export type ItemSpawn = __Infer<typeof ItemSpawn>;
+
 export const Obstacle = __t.object("Obstacle", {
   id: __t.u64(),
   roomCode: __t.string(),
@@ -42,6 +51,8 @@ export const Racer = __t.object("Racer", {
   joinedAt: __t.timestamp(),
   lastMoveAt: __t.timestamp(),
   stunnedUntil: __t.timestamp(),
+  heldItem: __t.string(),
+  promotedUntil: __t.timestamp(),
 });
 export type Racer = __Infer<typeof Racer>;
 

@@ -14,6 +14,7 @@ import SetPieceReducer from "../set_piece_reducer";
 import SetReadyReducer from "../set_ready_reducer";
 import StartRaceReducer from "../start_race_reducer";
 import SubmitMoveReducer from "../submit_move_reducer";
+import UseItemReducer from "../use_item_reducer";
 
 export type CreateRoomParams = __Infer<typeof CreateRoomReducer>;
 export type JoinRoomParams = __Infer<typeof JoinRoomReducer>;
@@ -23,4 +24,5 @@ export type SetPieceParams = __Infer<typeof SetPieceReducer>;
 export type SetReadyParams = __Infer<typeof SetReadyReducer>;
 export type StartRaceParams = __Infer<typeof StartRaceReducer>;
 export type SubmitMoveParams = __Infer<typeof SubmitMoveReducer>;
+export type UseItemParams = __Infer<typeof UseItemReducer>;
 

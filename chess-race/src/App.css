@@ -547,6 +547,101 @@ button:disabled {
   color: var(--bad);
 }
 
+.legend-item {
+  color: var(--accent-2);
+  font-weight: 700;
+}
+
+/* ── Items ── */
+.item-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 38px;
+}
+
+.item-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--accent-2);
+  background: linear-gradient(120deg, #2a2350, #1c2440);
+  color: var(--text);
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 0 16px rgba(155, 123, 255, 0.35);
+  animation: item-glow 1.6s ease-in-out infinite;
+}
+
+@keyframes item-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 12px rgba(155, 123, 255, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 22px rgba(155, 123, 255, 0.6);
+  }
+}
+
+.item-glyph {
+  font-size: 18px;
+  color: var(--accent-2);
+}
+
+.item-hint {
+  font-size: 13px;
+}
+
+.queen-badge {
+  margin-left: auto;
+  color: #ffd166;
+  font-weight: 700;
+  text-shadow: 0 0 10px #ffd166;
+}
+
+/* Item pickups on the board. */
+.item-mark {
+  font-size: clamp(16px, 3.4vw, 26px);
+  font-weight: 700;
+  animation: item-bob 1.5s ease-in-out infinite;
+}
+
+.item-promotion {
+  color: #ffd166;
+  text-shadow: 0 0 12px #ffd166;
+}
+
+.item-freeze {
+  color: #7fdbff;
+  text-shadow: 0 0 12px #7fdbff;
+}
+
+.item-mine {
+  color: var(--accent-2);
+  text-shadow: 0 0 12px var(--accent-2);
+}
+
+@keyframes item-bob {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-2px) scale(1.12);
+  }
+}
+
+/* A promoted (Queen) piece gets a gold ring. */
+.piece-queen {
+  box-shadow:
+    0 0 18px #ffd166,
+    0 0 0 3px #ffd166,
+    inset 0 3px 4px rgba(255, 255, 255, 0.45),
+    inset 0 -4px 6px rgba(0, 0, 0, 0.3);
+}
+
 .ladder {
   display: flex;
   flex-direction: column;

@@ -1,5 +1,5 @@
 import { useMemo, type CSSProperties } from "react";
-import type { Racer, Room, Obstacle } from "./module_bindings/types";
+import type { Racer, Room, Obstacle, ItemSpawn } from "./module_bindings/types";
 import {
   legalTargets,
   cellKey,
@@ -15,6 +15,17 @@ const GLYPHS: Record<string, string> = {
   knight: "♞",
   bishop: "♝",
   queen: "♛",
+};
+
+const ITEM_GLYPH: Record<string, string> = {
+  promotion: "⬆",
+  freeze: "❄",
+  mine: "✦",
+};
+const ITEM_LABEL: Record<string, string> = {
+  promotion: "Promote to Queen",
+  freeze: "Freeze the leader",
+  mine: "Drop a mine",
 };
 
 // Stable per-lane colours so each racer reads as one identity.
@@ -35,32 +46,44 @@ type Props = {
   me: Racer;
   racers: Racer[];
   obstacles: Obstacle[];
+  items: ItemSpawn[];
   room: Room;
+  now: number; // ms, for promotion/freeze timers
   cooldownRemaining: number; // ms until the next move is allowed (0 = ready)
   stunned: boolean;
   onMove: (row: number, col: number) => void;
+  onUseItem: () => void;
 };
 
 export default function Board({
   me,
   racers,
   obstacles,
+  items,
   room,
+  now,
   cooldownRemaining,
   stunned,
   onMove,
+  onUseItem,
 }: Props) {
   const ready =
     cooldownRemaining <= 0 && !me.finished && room.status === "racing";
 
-  // Blockers + legal moves + threatened tiles mirror the server authority.
-  const { legalSet, racersByCell, wallSet, mineSet, threatSet } =
+  // A racer moves as a Queen while promotion is active.
+  const effPiece = (r: Racer) =>
+    r.promotedUntil.toDate().getTime() > now ? "queen" : r.piece;
+  const iAmQueen = effPiece(me) === "queen";
+
+  // Blockers + legal moves + hazards + items mirror the server authority.
+  const { legalSet, racersByCell, wallSet, mineSet, threatSet, itemByCell } =
     useMemo(() => {
       const blockers: Blockers = new Map();
       const walls = new Set<string>();
       const mines = new Set<string>();
       const threats = new Set<string>();
       const byCell = new Map<string, Racer>();
+      const itemCell = new Map<string, ItemSpawn>();
 
       for (const o of obstacles) {
         const k = cellKey(o.row, o.col);
@@ -70,18 +93,18 @@ export default function Board({
         } else {
           mines.add(k);
           blockers.set(k, "mine");
-          // Pawn mine threatens its two forward diagonals.
           threats.add(cellKey(o.row - 1, o.col + 1));
           threats.add(cellKey(o.row + 1, o.col + 1));
         }
       }
+      for (const it of items) itemCell.set(cellKey(it.row, it.col), it);
       for (const r of racers) {
         byCell.set(cellKey(r.row, r.col), r);
         if (r.id !== me.id && !r.finished)
           blockers.set(cellKey(r.row, r.col), "racer");
       }
       const legal = new Set(
-        legalTargets(me.piece, me.row, me.col, blockers).map((c) =>
+        legalTargets(effPiece(me), me.row, me.col, blockers).map((c) =>
           cellKey(c.row, c.col),
         ),
       );
@@ -91,14 +114,15 @@ export default function Board({
         wallSet: walls,
         mineSet: mines,
         threatSet: threats,
+        itemByCell: itemCell,
       };
-    }, [obstacles, racers, me.id, me.piece, me.row, me.col]);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [obstacles, items, racers, me.id, me.piece, me.row, me.col, iAmQueen]);
 
-  // Fixed-size camera: always show the same number of columns (a few behind +
-  // full vision ahead) so the cell size never changes — no zoom near the finish
-  // — and clamp at the track ends so it scrolls smoothly instead of resizing.
+  // Fixed-size camera: always the same number of columns (a few behind + full
+  // vision ahead), clamped at the track ends — no zoom near the finish, no shake.
   const BEHIND = 3;
-  const WINDOW = VISION + BEHIND + 1; // constant column count
+  const WINDOW = VISION + BEHIND + 1;
   const startCol = Math.max(0, Math.min(me.col - BEHIND, TRACK_COLS - WINDOW));
   const cols: number[] = [];
   for (let i = 0; i < WINDOW; i++) cols.push(startCol + i);
@@ -111,7 +135,7 @@ export default function Board({
   const status = me.finished
     ? `finished #${me.finishRank}`
     : stunned
-      ? "stunned"
+      ? "frozen"
       : ready
         ? "ready"
         : "…";
@@ -120,7 +144,7 @@ export default function Board({
     <div className="board-wrap">
       <div className="hud">
         <span className="hud-piece" style={{ color: laneColor(me) }}>
-          {GLYPHS[me.piece] ?? "♟"} {me.name}
+          {GLYPHS[effPiece(me)] ?? "♟"} {me.name}
         </span>
         <span className="muted">
           col {me.col} / {FINISH_COL}
@@ -141,6 +165,22 @@ export default function Board({
         <span className={`muted ${stunned ? "stun-label" : ""}`}>{status}</span>
       </div>
 
+      {/* Held item + use control. */}
+      <div className="item-bar">
+        {me.heldItem ? (
+          <button className="item-btn" onClick={onUseItem}>
+            <span className="item-glyph">{ITEM_GLYPH[me.heldItem]}</span>
+            Use: {ITEM_LABEL[me.heldItem]}
+          </button>
+        ) : (
+          <span className="muted item-hint">
+            Grab an item ({Object.values(ITEM_GLYPH).join(" ")}) by landing on
+            it
+          </span>
+        )}
+        {iAmQueen && <span className="queen-badge">♛ Queen!</span>}
+      </div>
+
       <div
         className="board"
         style={{ gridTemplateColumns: `repeat(${cols.length}, 1fr)` }}
@@ -149,6 +189,7 @@ export default function Board({
           cols.map((col) => {
             const key = cellKey(row, col);
             const occupant = racersByCell.get(key);
+            const item = itemByCell.get(key);
             const isLegal = legalSet.has(key);
             const isMe = occupant?.id === me.id;
             const isWall = wallSet.has(key);
@@ -171,16 +212,22 @@ export default function Board({
               >
                 {occupant ? (
                   <span
-                    className={`piece ${isMe ? "piece-me" : ""}`}
+                    className={`piece ${isMe ? "piece-me" : ""} ${
+                      effPiece(occupant) === "queen" ? "piece-queen" : ""
+                    }`}
                     style={{ "--lane": laneColor(occupant) } as CSSProperties}
                     title={occupant.name}
                   >
-                    {GLYPHS[occupant.piece] ?? "♟"}
+                    {GLYPHS[effPiece(occupant)] ?? "♟"}
                   </span>
                 ) : isWall ? (
                   <span className="wall-mark" />
                 ) : isMine ? (
                   <span className="mine-mark">✸</span>
+                ) : item ? (
+                  <span className={`item-mark item-${item.kind}`}>
+                    {ITEM_GLYPH[item.kind]}
+                  </span>
                 ) : clickable ? (
                   <span className="legal-dot" />
                 ) : null}
@@ -191,9 +238,9 @@ export default function Board({
       </div>
 
       <p className="muted fog-note">
-        Fog: you see {VISION} tiles ahead. <span className="legend-wall" /> wall
-        · <span className="legend-mine">✸</span> mine (land on it to defuse; its
-        diagonals knock you back)
+        Fog: you see {VISION} ahead. <span className="legend-wall" /> wall ·{" "}
+        <span className="legend-mine">✸</span> mine ·{" "}
+        <span className="legend-item">⬆❄✦</span> items
       </p>
 
       {/* Full-track ladder so you can read the whole field's progress. */}
@@ -203,7 +250,7 @@ export default function Board({
           .map((r) => (
             <div className="ladder-row" key={r.id.toString()}>
               <span className="ladder-name" style={{ color: laneColor(r) }}>
-                {GLYPHS[r.piece] ?? "♟"} {r.name}
+                {GLYPHS[effPiece(r)] ?? "♟"} {r.name}
                 {r.id === me.id && <span className="you">you</span>}
                 {r.finished && <span className="rank">#{r.finishRank}</span>}
               </span>
@@ -215,7 +262,7 @@ export default function Board({
                     color: laneColor(r),
                   }}
                 >
-                  {GLYPHS[r.piece] ?? "♟"}
+                  {GLYPHS[effPiece(r)] ?? "♟"}
                 </span>
               </div>
             </div>

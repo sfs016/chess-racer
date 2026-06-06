@@ -48,6 +48,7 @@ function App() {
   const [rooms] = useTable(tables.room);
   const [racers] = useTable(tables.racer);
   const [obstacles] = useTable(tables.obstacle);
+  const [items] = useTable(tables.itemSpawn);
 
   const [name, setName] = useState(() => safeGet(NAME_KEY));
   const [piece, setPiece] = useState<string>("rook");
@@ -62,6 +63,7 @@ function App() {
   const startRace = useReducer(reducers.startRace);
   const leaveRoom = useReducer(reducers.leaveRoom);
   const submitMove = useReducer(reducers.submitMove);
+  const activateItem = useReducer(reducers.useItem);
 
   // A ticking clock so the move cooldown counts down smoothly in the UI.
   const [now, setNow] = useState(() => Date.now());
@@ -202,6 +204,7 @@ function App() {
       stunRemaining,
     );
     const roomObstacles = obstacles.filter((o) => o.roomCode === myRoom.code);
+    const roomItems = items.filter((i) => i.roomCode === myRoom.code);
     return (
       <div className="screen">
         <div className="race-header">
@@ -215,10 +218,13 @@ function App() {
           me={myRacer}
           racers={roomRacers}
           obstacles={roomObstacles}
+          items={roomItems}
           room={myRoom}
+          now={now}
           cooldownRemaining={cooldownRemaining}
           stunned={stunRemaining > 0}
           onMove={(row, col) => run(submitMove({ toRow: row, toCol: col }))}
+          onUseItem={() => run(activateItem())}
         />
         {error && <p className="error">{error}</p>}
       </div>

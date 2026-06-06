@@ -42,10 +42,12 @@ import SetPieceReducer from "./set_piece_reducer";
 import SetReadyReducer from "./set_ready_reducer";
 import StartRaceReducer from "./start_race_reducer";
 import SubmitMoveReducer from "./submit_move_reducer";
+import UseItemReducer from "./use_item_reducer";
 
 // Import all procedure arg schemas
 
 // Import all table schema definitions
+import ItemSpawnRow from "./item_spawn_table";
 import ObstacleRow from "./obstacle_table";
 import RacerRow from "./racer_table";
 import RoomRow from "./room_table";
@@ -54,6 +56,20 @@ import RoomRow from "./room_table";
 
 /** The schema information for all tables in this module. This is defined the same was as the tables would have been defined in the server. */
 const tablesSchema = __schema({
+  itemSpawn: __table({
+    name: 'item_spawn',
+    indexes: [
+      { accessor: 'id', name: 'item_spawn_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'roomCode', name: 'item_spawn_room_code_idx_btree', algorithm: 'btree', columns: [
+        'roomCode',
+      ] },
+    ],
+    constraints: [
+      { name: 'item_spawn_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, ItemSpawnRow),
   obstacle: __table({
     name: 'obstacle',
     indexes: [
@@ -108,6 +124,7 @@ const reducersSchema = __reducers(
   __reducerSchema("set_ready", SetReadyReducer),
   __reducerSchema("start_race", StartRaceReducer),
   __reducerSchema("submit_move", SubmitMoveReducer),
+  __reducerSchema("use_item", UseItemReducer),
 );
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */
