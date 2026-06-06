@@ -10,30 +10,18 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
-export const Racer = __t.object("Racer", {
-  id: __t.u64(),
+export default __t.row({
+  id: __t.u64().primaryKey(),
   identity: __t.identity(),
-  roomCode: __t.string(),
+  roomCode: __t.string().name("room_code"),
   name: __t.string(),
   piece: __t.string(),
   row: __t.u32(),
   col: __t.u32(),
-  isBot: __t.bool(),
+  isBot: __t.bool().name("is_bot"),
   online: __t.bool(),
   ready: __t.bool(),
   finished: __t.bool(),
-  finishRank: __t.u32(),
-  joinedAt: __t.timestamp(),
+  finishRank: __t.u32().name("finish_rank"),
+  joinedAt: __t.timestamp().name("joined_at"),
 });
-export type Racer = __Infer<typeof Racer>;
-
-export const Room = __t.object("Room", {
-  code: __t.string(),
-  status: __t.string(),
-  seed: __t.u32(),
-  host: __t.identity(),
-  createdAt: __t.timestamp(),
-  startedAt: __t.option(__t.timestamp()),
-});
-export type Room = __Infer<typeof Room>;
-

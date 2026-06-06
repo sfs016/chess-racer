@@ -11,5 +11,7 @@ import {
 } from "spacetimedb";
 
 export default {
-  text: __t.string(),
+  code: __t.string(),
+  name: __t.string(),
+  piece: __t.string(),
 };

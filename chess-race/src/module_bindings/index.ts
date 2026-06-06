@@ -34,43 +34,61 @@ import {
 } from "spacetimedb";
 
 // Import all reducer arg schemas
-import SendMessageReducer from "./send_message_reducer";
-import SetNameReducer from "./set_name_reducer";
+import CreateRoomReducer from "./create_room_reducer";
+import JoinRoomReducer from "./join_room_reducer";
+import LeaveRoomReducer from "./leave_room_reducer";
+import SetPieceReducer from "./set_piece_reducer";
+import SetReadyReducer from "./set_ready_reducer";
+import StartRaceReducer from "./start_race_reducer";
 
 // Import all procedure arg schemas
 
 // Import all table schema definitions
-import MessageRow from "./message_table";
-import UserRow from "./user_table";
+import RacerRow from "./racer_table";
+import RoomRow from "./room_table";
 
 /** Type-only namespace exports for generated type groups. */
 
 /** The schema information for all tables in this module. This is defined the same was as the tables would have been defined in the server. */
 const tablesSchema = __schema({
-  message: __table({
-    name: 'message',
+  racer: __table({
+    name: 'racer',
     indexes: [
-    ],
-    constraints: [
-    ],
-  }, MessageRow),
-  user: __table({
-    name: 'user',
-    indexes: [
-      { accessor: 'identity', name: 'user_identity_idx_btree', algorithm: 'btree', columns: [
+      { accessor: 'id', name: 'racer_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'identity', name: 'racer_identity_idx_btree', algorithm: 'btree', columns: [
         'identity',
+      ] },
+      { accessor: 'roomCode', name: 'racer_room_code_idx_btree', algorithm: 'btree', columns: [
+        'roomCode',
       ] },
     ],
     constraints: [
-      { name: 'user_identity_key', constraint: 'unique', columns: ['identity'] },
+      { name: 'racer_id_key', constraint: 'unique', columns: ['id'] },
     ],
-  }, UserRow),
+  }, RacerRow),
+  room: __table({
+    name: 'room',
+    indexes: [
+      { accessor: 'code', name: 'room_code_idx_btree', algorithm: 'btree', columns: [
+        'code',
+      ] },
+    ],
+    constraints: [
+      { name: 'room_code_key', constraint: 'unique', columns: ['code'] },
+    ],
+  }, RoomRow),
 });
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
-  __reducerSchema("send_message", SendMessageReducer),
-  __reducerSchema("set_name", SetNameReducer),
+  __reducerSchema("create_room", CreateRoomReducer),
+  __reducerSchema("join_room", JoinRoomReducer),
+  __reducerSchema("leave_room", LeaveRoomReducer),
+  __reducerSchema("set_piece", SetPieceReducer),
+  __reducerSchema("set_ready", SetReadyReducer),
+  __reducerSchema("start_race", StartRaceReducer),
 );
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */

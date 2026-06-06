@@ -11,7 +11,10 @@ import {
 } from "spacetimedb";
 
 export default __t.row({
-  identity: __t.identity().primaryKey(),
-  name: __t.option(__t.string()),
-  online: __t.bool(),
+  code: __t.string().primaryKey(),
+  status: __t.string(),
+  seed: __t.u32(),
+  host: __t.identity(),
+  createdAt: __t.timestamp().name("created_at"),
+  startedAt: __t.option(__t.timestamp()).name("started_at"),
 });
