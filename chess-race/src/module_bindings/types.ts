@@ -62,6 +62,7 @@ export const Room = __t.object("Room", {
   status: __t.string(),
   seed: __t.u32(),
   piece: __t.string(),
+  botCount: __t.u32(),
   host: __t.identity(),
   createdAt: __t.timestamp(),
   startedAt: __t.option(__t.timestamp()),

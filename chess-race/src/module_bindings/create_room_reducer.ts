@@ -13,4 +13,5 @@ import {
 export default {
   name: __t.string(),
   piece: __t.string(),
+  bots: __t.u32(),
 };

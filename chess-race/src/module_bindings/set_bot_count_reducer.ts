@@ -10,13 +10,6 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
-export default __t.row({
-  code: __t.string().primaryKey(),
-  status: __t.string(),
-  seed: __t.u32(),
-  piece: __t.string(),
-  botCount: __t.u32().name("bot_count"),
-  host: __t.identity(),
-  createdAt: __t.timestamp().name("created_at"),
-  startedAt: __t.option(__t.timestamp()).name("started_at"),
-});
+export default {
+  count: __t.u32(),
+};

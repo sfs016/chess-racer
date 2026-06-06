@@ -42,7 +42,6 @@ const STUN_MICROS = 1_500_000n; // 1.5s stun after triggering a mine
 const PROMOTION_MICROS = 8_000_000n; // 8s as a Queen
 const FREEZE_MICROS = 3_000_000n; // 3s frozen
 
-const MIN_RACERS = 4; // fill with bots up to this many at race start
 // Bots tick slower than the human move cooldown (0.6s) so an attentive human
 // keeps an edge; bots stay competitive but beatable.
 const BOT_TICK_MICROS = 950_000n;
@@ -82,6 +81,7 @@ const room = table(
     status: t.string(), // lobby | countdown | racing | finished
     seed: t.u32(), // PRNG seed for procedural track
     piece: t.string(), // the single piece everyone races (host's choice)
+    botCount: t.u32(), // bots the host wants added at start (0 = human-only)
     host: t.identity(), // who created the room (may start the race)
     createdAt: t.timestamp(),
     startedAt: t.timestamp().optional(), // when racing begins (end of countdown)
@@ -597,10 +597,11 @@ function chooseBotMove(ctx: Ctx, bot: RacerRow, legal: Cell[]): Cell {
   return best;
 }
 
-// Fill a room with bots up to MIN_RACERS when the race starts. Bots race the
-// same piece as everyone else (room.piece).
-function fillBots(ctx: Ctx, code: string, piece: string) {
-  while (racersInRoom(ctx, code).length < MIN_RACERS) {
+// Add `count` bots to a room (capped by available lanes). Bots race the same
+// piece as everyone else (room.piece).
+function fillBots(ctx: Ctx, code: string, piece: string, count: number) {
+  for (let added = 0; added < count; added++) {
+    if (racersInRoom(ctx, code).length >= MAX_RACERS) break;
     const lane = nextFreeLane(ctx, code);
     const name = BOT_NAMES[ctx.random.integerInRange(0, BOT_NAMES.length - 1)];
     const kind = BOT_KINDS[ctx.random.integerInRange(0, BOT_KINDS.length - 1)];
@@ -643,8 +644,8 @@ function ensureBotTimer(ctx: Ctx) {
 // Create a fresh room and seat the caller in it as host. The host's chosen
 // piece becomes the single piece everyone in the room races.
 export const createRoom = spacetimedb.reducer(
-  { name: t.string(), piece: t.string() },
-  (ctx, { name, piece }) => {
+  { name: t.string(), piece: t.string(), bots: t.u32() },
+  (ctx, { name, piece, bots }) => {
     const cleanName = validateName(name);
     const cleanPiece = validatePiece(piece);
 
@@ -657,11 +658,34 @@ export const createRoom = spacetimedb.reducer(
       status: "lobby",
       seed: ctx.random.integerInRange(1, 0x7fffffff),
       piece: cleanPiece,
+      botCount: Math.min(bots, MAX_RACERS - 1),
       host: ctx.sender,
       createdAt: ctx.timestamp,
       startedAt: undefined,
     });
     seatHuman(ctx, code, cleanName, cleanPiece, 0);
+  },
+);
+
+// Host sets how many bots to add at race start (0 = human-only race). Capped so
+// humans + bots can never exceed MAX_RACERS.
+export const setBotCount = spacetimedb.reducer(
+  { count: t.u32() },
+  (ctx, { count }) => {
+    const mine = [...ctx.db.racer.identity.filter(ctx.sender)][0];
+    if (!mine) throw new SenderError("You are not in a room");
+    const room = ctx.db.room.code.find(mine.roomCode);
+    if (!room) throw new SenderError("Room not found");
+    if (!room.host.equals(ctx.sender))
+      throw new SenderError("Only the host can set bots");
+    if (room.status !== "lobby") throw new SenderError("Race already started");
+    const humans = racersInRoom(ctx, mine.roomCode).filter(
+      (r) => !r.isBot,
+    ).length;
+    ctx.db.room.code.update({
+      ...room,
+      botCount: Math.min(count, MAX_RACERS - humans),
+    });
   },
 );
 
@@ -726,7 +750,14 @@ export const startRace = spacetimedb.reducer(
 
     // Promotion (→ Queen) items only make sense when not already racing Queens.
     generateTrack(ctx, code, room.seed, room.piece !== "queen");
-    fillBots(ctx, code, room.piece); // top up to MIN_RACERS with bots
+    // Add the host's requested bots, capped so the field never exceeds MAX_RACERS.
+    const humans = racersInRoom(ctx, code).length;
+    fillBots(
+      ctx,
+      code,
+      room.piece,
+      Math.min(room.botCount, MAX_RACERS - humans),
+    );
     ensureBotTimer(ctx); // make sure the bot scheduler is running
 
     // Racing starts when the countdown ends; cooldowns are measured from then.
@@ -814,8 +845,8 @@ export const useItem = spacetimedb.reducer((ctx) => {
 // Quick Play: seat the caller in the newest joinable lobby, or open a fresh room
 // if none is available.
 export const quickPlay = spacetimedb.reducer(
-  { name: t.string(), piece: t.string() },
-  (ctx, { name, piece }) => {
+  { name: t.string(), piece: t.string(), bots: t.u32() },
+  (ctx, { name, piece, bots }) => {
     const cleanName = validateName(name);
     const cleanPiece = validatePiece(piece);
     removeCallerRacers(ctx);
@@ -823,7 +854,10 @@ export const quickPlay = spacetimedb.reducer(
     let target: RoomRow | undefined;
     for (const room of ctx.db.room.iter()) {
       if (room.status !== "lobby") continue;
-      if (racersInRoom(ctx, room.code).length >= MAX_RACERS) continue;
+      const inRoom = racersInRoom(ctx, room.code);
+      if (inRoom.length >= MAX_RACERS) continue;
+      // Skip dead lobbies whose humans have all disconnected.
+      if (!inRoom.some((r) => r.online && !r.isBot)) continue;
       if (
         !target ||
         room.createdAt.microsSinceUnixEpoch >
@@ -849,6 +883,7 @@ export const quickPlay = spacetimedb.reducer(
         status: "lobby",
         seed: ctx.random.integerInRange(1, 0x7fffffff),
         piece: cleanPiece,
+        botCount: Math.min(bots, MAX_RACERS - 1),
         host: ctx.sender,
         createdAt: ctx.timestamp,
         startedAt: undefined,

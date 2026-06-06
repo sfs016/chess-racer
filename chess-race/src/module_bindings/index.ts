@@ -38,6 +38,7 @@ import CreateRoomReducer from "./create_room_reducer";
 import JoinRoomReducer from "./join_room_reducer";
 import LeaveRoomReducer from "./leave_room_reducer";
 import QuickPlayReducer from "./quick_play_reducer";
+import SetBotCountReducer from "./set_bot_count_reducer";
 import SetReadyReducer from "./set_ready_reducer";
 import SetRoomPieceReducer from "./set_room_piece_reducer";
 import StartRaceReducer from "./start_race_reducer";
@@ -120,6 +121,7 @@ const reducersSchema = __reducers(
   __reducerSchema("join_room", JoinRoomReducer),
   __reducerSchema("leave_room", LeaveRoomReducer),
   __reducerSchema("quick_play", QuickPlayReducer),
+  __reducerSchema("set_bot_count", SetBotCountReducer),
   __reducerSchema("set_ready", SetReadyReducer),
   __reducerSchema("set_room_piece", SetRoomPieceReducer),
   __reducerSchema("start_race", StartRaceReducer),

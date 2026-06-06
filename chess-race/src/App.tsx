@@ -59,6 +59,7 @@ function App() {
 
   const [name, setName] = useState(() => safeGet(NAME_KEY));
   const [piece, setPiece] = useState<string>("rook");
+  const [bots, setBots] = useState(3);
   const [joinCode, setJoinCode] = useState(() => roomCodeFromUrl());
   const [error, setError] = useState<string | null>(null);
   const [showHowTo, setShowHowTo] = useState(false);
@@ -68,6 +69,7 @@ function App() {
   const quickPlay = useReducer(reducers.quickPlay);
   const joinRoom = useReducer(reducers.joinRoom);
   const setRoomPiece = useReducer(reducers.setRoomPiece);
+  const setBotCount = useReducer(reducers.setBotCount);
   const setReady = useReducer(reducers.setReady);
   const startRace = useReducer(reducers.startRace);
   const leaveRoom = useReducer(reducers.leaveRoom);
@@ -140,7 +142,7 @@ function App() {
   if (!connected || !identity) {
     return (
       <div className="screen center">
-        <div className="logo">♞ Chess Race</div>
+        <div className="logo">♞ Chess Racer</div>
         <p className="muted">Connecting…</p>
       </div>
     );
@@ -153,7 +155,7 @@ function App() {
       <div className="screen center">
         {showHowTo && <HowToPlay onClose={() => setShowHowTo(false)} />}
         <div className="topbar">{muteBtn}</div>
-        <div className="logo">♞ Chess Race</div>
+        <div className="logo">♞ Chess Racer</div>
         <p className="tagline">
           Up to 10 players race the same chess piece down a 100-tile track. Move
           by its rules, dodge mines and walls, grab power-ups, reach the flag
@@ -188,18 +190,39 @@ function App() {
             </div>
           </div>
 
+          <div className="field">
+            <span>Bots (0 for a human-only race, max 9)</span>
+            <div className="stepper">
+              <button
+                className="step-btn"
+                onClick={() => setBots((b) => Math.max(0, b - 1))}
+              >
+                −
+              </button>
+              <span className="step-val">{bots}</span>
+              <button
+                className="step-btn"
+                onClick={() => setBots((b) => Math.min(9, b + 1))}
+              >
+                +
+              </button>
+            </div>
+          </div>
+
           <div className="home-actions">
             <button
               className="primary"
               disabled={!canSubmit}
-              onClick={() => run(quickPlay({ name: name.trim(), piece }))}
+              onClick={() => run(quickPlay({ name: name.trim(), piece, bots }))}
             >
               ⚡ Quick Play
             </button>
             <button
               className="secondary"
               disabled={!canSubmit}
-              onClick={() => run(createRoom({ name: name.trim(), piece }))}
+              onClick={() =>
+                run(createRoom({ name: name.trim(), piece, bots }))
+              }
             >
               Create Room
             </button>
@@ -249,6 +272,7 @@ function App() {
   const roomRacers = racers
     .filter((r) => r.roomCode === myRoom.code)
     .sort((a, b) => (a.joinedAt.toDate() > b.joinedAt.toDate() ? 1 : -1));
+  const humanCount = roomRacers.filter((r) => !r.isBot).length;
   const isHost = myRoom.host.isEqual(identity);
   const shareUrl = `${window.location.origin}${window.location.pathname}?r=${myRoom.code}`;
 
@@ -271,7 +295,7 @@ function App() {
       <div className="screen">
         {showHowTo && <HowToPlay onClose={() => setShowHowTo(false)} />}
         <div className="race-header">
-          <div className="logo small">♞ Chess Race</div>
+          <div className="logo small">♞ Chess Racer</div>
           <span className="muted">Room {myRoom.code}</span>
           <button className="ghost" onClick={() => setShowHowTo(true)}>
             ?
@@ -325,7 +349,7 @@ function App() {
         </button>
         {muteBtn}
       </div>
-      <div className="logo small">♞ Chess Race</div>
+      <div className="logo small">♞ Chess Racer</div>
       <div className="card">
         <div className="room-code">
           <span className="muted">Room code</span>
@@ -377,6 +401,34 @@ function App() {
               </button>
             ))}
           </div>
+        </div>
+
+        <div className="field">
+          <span>
+            Bots {isHost ? "(0 for a human-only race)" : "(set by host)"}
+          </span>
+          <div className="stepper">
+            <button
+              className="step-btn"
+              disabled={!isHost || myRoom.botCount <= 0}
+              onClick={() => run(setBotCount({ count: myRoom.botCount - 1 }))}
+            >
+              −
+            </button>
+            <span className="step-val">{myRoom.botCount}</span>
+            <button
+              className="step-btn"
+              disabled={!isHost || humanCount + myRoom.botCount >= 10}
+              onClick={() => run(setBotCount({ count: myRoom.botCount + 1 }))}
+            >
+              +
+            </button>
+          </div>
+          <p className="muted hint-sm">
+            {humanCount} player{humanCount === 1 ? "" : "s"} +{" "}
+            {Math.min(myRoom.botCount, 10 - humanCount)} bots ={" "}
+            {humanCount + Math.min(myRoom.botCount, 10 - humanCount)} racers
+          </p>
         </div>
 
         <div className="lobby-actions">

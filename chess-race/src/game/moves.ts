@@ -1,4 +1,4 @@
-// Legal-move rules for Chess Race.
+// Legal-move rules for Chess Racer.
 //
 // IMPORTANT: this mirrors `legalTargets` in spacetimedb/src/index.ts. The server
 // is the authority (it re-validates every move); the client uses this only to
