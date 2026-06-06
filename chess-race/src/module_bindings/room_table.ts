@@ -14,6 +14,7 @@ export default __t.row({
   code: __t.string().primaryKey(),
   status: __t.string(),
   seed: __t.u32(),
+  piece: __t.string(),
   host: __t.identity(),
   createdAt: __t.timestamp().name("created_at"),
   startedAt: __t.option(__t.timestamp()).name("started_at"),

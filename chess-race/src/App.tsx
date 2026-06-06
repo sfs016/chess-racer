@@ -1,14 +1,24 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./App.css";
 import Board from "./Board";
+import HowToPlay from "./HowToPlay";
 import { tables, reducers } from "./module_bindings";
 import type { Racer, Room } from "./module_bindings/types";
 import { useSpacetimeDB, useTable, useReducer } from "spacetimedb/react";
+import {
+  playCountdownBeep,
+  playGo,
+  playPowerup,
+  playWin,
+  setMuted,
+  getMuted,
+} from "./sound";
 
 const PIECES = [
   { id: "rook", glyph: "♜", label: "Rook" },
   { id: "knight", glyph: "♞", label: "Knight" },
   { id: "bishop", glyph: "♝", label: "Bishop" },
+  { id: "queen", glyph: "♛", label: "Queen" },
 ] as const;
 
 const MOVE_COOLDOWN_MS = 600;
@@ -18,7 +28,6 @@ function glyphFor(piece: string): string {
   return PIECES.find((p) => p.id === piece)?.glyph ?? "♟";
 }
 
-// localStorage can throw (private mode, opaque origins in tests) — guard it.
 function safeGet(key: string): string {
   try {
     return localStorage.getItem(key) ?? "";
@@ -26,7 +35,6 @@ function safeGet(key: string): string {
     return "";
   }
 }
-
 function safeSet(key: string, value: string): void {
   try {
     localStorage.setItem(key, value);
@@ -35,7 +43,6 @@ function safeSet(key: string, value: string): void {
   }
 }
 
-// Read a room code from the share URL (?r=CODE), if present.
 function roomCodeFromUrl(): string {
   const params = new URLSearchParams(window.location.search);
   return (params.get("r") ?? "").toUpperCase();
@@ -44,7 +51,6 @@ function roomCodeFromUrl(): string {
 function App() {
   const { identity, isActive: connected } = useSpacetimeDB();
 
-  // useTable auto-subscribes; for the lobby the row counts are tiny.
   const [rooms] = useTable(tables.room);
   const [racers] = useTable(tables.racer);
   const [obstacles] = useTable(tables.obstacle);
@@ -54,18 +60,20 @@ function App() {
   const [piece, setPiece] = useState<string>("rook");
   const [joinCode, setJoinCode] = useState(() => roomCodeFromUrl());
   const [error, setError] = useState<string | null>(null);
+  const [showHowTo, setShowHowTo] = useState(false);
+  const [muted, setMutedState] = useState(() => getMuted());
 
   const createRoom = useReducer(reducers.createRoom);
   const quickPlay = useReducer(reducers.quickPlay);
   const joinRoom = useReducer(reducers.joinRoom);
-  const setPieceReducer = useReducer(reducers.setPiece);
+  const setRoomPiece = useReducer(reducers.setRoomPiece);
   const setReady = useReducer(reducers.setReady);
   const startRace = useReducer(reducers.startRace);
   const leaveRoom = useReducer(reducers.leaveRoom);
   const submitMove = useReducer(reducers.submitMove);
   const activateItem = useReducer(reducers.useItem);
 
-  // A ticking clock so the move cooldown counts down smoothly in the UI.
+  // A ticking clock so cooldown / countdown timers update smoothly.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 80);
@@ -76,7 +84,51 @@ function App() {
     if (name) safeSet(NAME_KEY, name);
   }, [name]);
 
-  // Surface reducer errors briefly.
+  const myRacer: Racer | undefined =
+    identity && racers.find((r) => r.identity.isEqual(identity));
+  const myRoom: Room | undefined = myRacer
+    ? rooms.find((r) => r.code === myRacer.roomCode)
+    : undefined;
+  const status = myRoom?.status;
+  const startsAtMs = myRoom?.startedAt?.toDate().getTime();
+
+  // ── Sound effects (hooks must run before any early return) ──────────────────
+  const beepSecRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (status === "countdown" && startsAtMs) {
+      const sec = Math.ceil((startsAtMs - now) / 1000);
+      if (sec >= 1 && sec <= 5 && beepSecRef.current !== sec) {
+        beepSecRef.current = sec;
+        playCountdownBeep();
+      }
+    } else {
+      beepSecRef.current = null;
+    }
+  }, [now, status, startsAtMs]);
+
+  const prevStatusRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (prevStatusRef.current === "countdown" && status === "racing") playGo();
+    prevStatusRef.current = status;
+  }, [status]);
+
+  const wonRef = useRef(false);
+  useEffect(() => {
+    if (myRacer?.finished && !wonRef.current) playWin();
+    wonRef.current = !!myRacer?.finished;
+  }, [myRacer?.finished]);
+
+  const toggleMute = () => {
+    const next = !muted;
+    setMuted(next);
+    setMutedState(next);
+  };
+  const muteBtn = (
+    <button className="ghost mute-btn" onClick={toggleMute} title="Sound">
+      {muted ? "🔇" : "🔊"}
+    </button>
+  );
+
   const run = (p: Promise<unknown>) => {
     setError(null);
     p.catch((e: unknown) =>
@@ -93,22 +145,17 @@ function App() {
     );
   }
 
-  const myRacer: Racer | undefined = racers.find((r) =>
-    r.identity.isEqual(identity),
-  );
-  const myRoom: Room | undefined = myRacer
-    ? rooms.find((r) => r.code === myRacer.roomCode)
-    : undefined;
-
   // ── Home: not in a room yet ────────────────────────────────────────────────
   if (!myRacer || !myRoom) {
     const canSubmit = name.trim().length > 0;
     return (
       <div className="screen center">
+        {showHowTo && <HowToPlay onClose={() => setShowHowTo(false)} />}
+        <div className="topbar">{muteBtn}</div>
         <div className="logo">♞ Chess Race</div>
         <p className="tagline">
-          Race a chess piece down a 100-tile track. Move by your piece's rules.
-          Block, dodge, win.
+          Everyone races the same chess piece down a 100-tile track. Move by its
+          rules, dodge mines and walls, grab power-ups, reach the flag first.
         </p>
 
         <div className="card">
@@ -123,7 +170,7 @@ function App() {
           </label>
 
           <div className="field">
-            <span>Piece</span>
+            <span>Piece (host's pick is used by everyone)</span>
             <div className="piece-row">
               {PIECES.map((p) => (
                 <button
@@ -155,10 +202,10 @@ function App() {
               Create Room
             </button>
           </div>
-          <p className="muted hint">
-            Quick Play drops you into an open room; the host's Start fills empty
-            seats with bots.
-          </p>
+
+          <button className="link-btn" onClick={() => setShowHowTo(true)}>
+            How to play?
+          </button>
 
           <div className="divider">or join with a code</div>
 
@@ -174,7 +221,7 @@ function App() {
               className="secondary"
               disabled={!canSubmit || joinCode.length < 4}
               onClick={() =>
-                run(joinRoom({ code: joinCode, name: name.trim(), piece }))
+                run(joinRoom({ code: joinCode, name: name.trim() }))
               }
             >
               Join
@@ -194,8 +241,8 @@ function App() {
   const isHost = myRoom.host.isEqual(identity);
   const shareUrl = `${window.location.origin}${window.location.pathname}?r=${myRoom.code}`;
 
-  // Racing / results view.
-  if (myRoom.status === "racing" || myRoom.status === "finished") {
+  // Racing / countdown / results view.
+  if (status === "racing" || status === "finished" || status === "countdown") {
     const sinceLastMove = now - myRacer.lastMoveAt.toDate().getTime();
     const stunRemaining = myRacer.stunnedUntil.toDate().getTime() - now;
     const cooldownRemaining = Math.max(
@@ -205,27 +252,50 @@ function App() {
     );
     const roomObstacles = obstacles.filter((o) => o.roomCode === myRoom.code);
     const roomItems = items.filter((i) => i.roomCode === myRoom.code);
+    const countdown =
+      status === "countdown" && startsAtMs
+        ? Math.max(0, Math.ceil((startsAtMs - now) / 1000))
+        : 0;
     return (
       <div className="screen">
+        {showHowTo && <HowToPlay onClose={() => setShowHowTo(false)} />}
         <div className="race-header">
           <div className="logo small">♞ Chess Race</div>
           <span className="muted">Room {myRoom.code}</span>
+          <button className="ghost" onClick={() => setShowHowTo(true)}>
+            ?
+          </button>
+          {muteBtn}
           <button className="ghost" onClick={() => run(leaveRoom())}>
             Leave
           </button>
         </div>
-        <Board
-          me={myRacer}
-          racers={roomRacers}
-          obstacles={roomObstacles}
-          items={roomItems}
-          room={myRoom}
-          now={now}
-          cooldownRemaining={cooldownRemaining}
-          stunned={stunRemaining > 0}
-          onMove={(row, col) => run(submitMove({ toRow: row, toCol: col }))}
-          onUseItem={() => run(activateItem())}
-        />
+        <div className="board-stage">
+          <Board
+            me={myRacer}
+            racers={roomRacers}
+            obstacles={roomObstacles}
+            items={roomItems}
+            room={myRoom}
+            now={now}
+            cooldownRemaining={cooldownRemaining}
+            stunned={stunRemaining > 0}
+            onMove={(row, col) => run(submitMove({ toRow: row, toCol: col }))}
+            onUseItem={() => {
+              playPowerup();
+              run(activateItem());
+            }}
+          />
+          {status === "countdown" && (
+            <div className="countdown-overlay">
+              <div className="countdown-num">{countdown || "GO!"}</div>
+              <div className="countdown-sub">
+                Racing as {glyphFor(myRoom.piece)}{" "}
+                {PIECES.find((p) => p.id === myRoom.piece)?.label}
+              </div>
+            </div>
+          )}
+        </div>
         {error && <p className="error">{error}</p>}
       </div>
     );
@@ -234,6 +304,13 @@ function App() {
   // Lobby view.
   return (
     <div className="screen center">
+      {showHowTo && <HowToPlay onClose={() => setShowHowTo(false)} />}
+      <div className="topbar">
+        <button className="ghost" onClick={() => setShowHowTo(true)}>
+          How to play?
+        </button>
+        {muteBtn}
+      </div>
       <div className="logo small">♞ Chess Race</div>
       <div className="card">
         <div className="room-code">
@@ -250,7 +327,7 @@ function App() {
         <div className="roster">
           {roomRacers.map((r) => (
             <div className="roster-row" key={r.id.toString()}>
-              <span className="glyph">{glyphFor(r.piece)}</span>
+              <span className="glyph">{glyphFor(myRoom.piece)}</span>
               <span className="roster-name">
                 {r.name}
                 {r.identity.isEqual(identity) && (
@@ -269,16 +346,17 @@ function App() {
         </div>
 
         <div className="field">
-          <span>Your piece</span>
+          <span>
+            {isHost ? "Piece (everyone races this)" : "Piece — host chooses"}
+          </span>
           <div className="piece-row">
             {PIECES.map((p) => (
               <button
                 key={p.id}
                 type="button"
-                className={`piece-btn ${
-                  myRacer.piece === p.id ? "selected" : ""
-                }`}
-                onClick={() => run(setPieceReducer({ piece: p.id }))}
+                disabled={!isHost}
+                className={`piece-btn ${myRoom.piece === p.id ? "selected" : ""}`}
+                onClick={() => isHost && run(setRoomPiece({ piece: p.id }))}
               >
                 <span className="glyph">{p.glyph}</span>
                 <span>{p.label}</span>
@@ -297,7 +375,6 @@ function App() {
           {isHost && (
             <button
               className="primary"
-              disabled={roomRacers.length < 1}
               onClick={() => run(startRace({ code: myRoom.code }))}
             >
               Start Race

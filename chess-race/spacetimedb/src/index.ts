@@ -29,6 +29,7 @@ const MAX_RACERS = 8; // human + bot cap per room
 const VISION = 10; // how many columns ahead a racer can see / reach
 const FINISH_COL = TRACK_COLS - 1; // landing here (or beyond) finishes the race
 const MOVE_COOLDOWN_MICROS = 600_000n; // 0.6s between moves (PRD: 500–700ms)
+const COUNTDOWN_MICROS = 5_000_000n; // 5s countdown before racing begins
 
 const SAFE_COLS = 3; // columns near the start kept clear of hazards
 const MINE_KNOCKBACK = 3; // tiles a triggered pawn mine knocks you back
@@ -57,7 +58,7 @@ const BOT_NAMES = [
 ];
 const BOT_KINDS = ["greedy", "cautious", "wild"] as const; // simple bot AIs
 
-const PIECES = ["rook", "knight", "bishop"] as const;
+const PIECES = ["rook", "knight", "bishop", "queen"] as const;
 type Piece = (typeof PIECES)[number];
 
 // Obstacle kinds (string `kind` column on `obstacle`):
@@ -79,10 +80,11 @@ const room = table(
   {
     code: t.string().primaryKey(),
     status: t.string(), // lobby | countdown | racing | finished
-    seed: t.u32(), // PRNG seed for procedural track (used from M3 on)
+    seed: t.u32(), // PRNG seed for procedural track
+    piece: t.string(), // the single piece everyone races (host's choice)
     host: t.identity(), // who created the room (may start the race)
     createdAt: t.timestamp(),
-    startedAt: t.timestamp().optional(),
+    startedAt: t.timestamp().optional(), // when racing begins (end of countdown)
   },
 );
 
@@ -94,7 +96,8 @@ const racer = table(
     identity: t.identity().index("btree"), // owner; zero-identity for bots later
     roomCode: t.string().index("btree"),
     name: t.string(),
-    piece: t.string(), // current piece (rook | knight | bishop | queen when promoted)
+    piece: t.string(), // the race piece (== room.piece; queen while promoted)
+    colorIndex: t.u32(), // stable per-racer colour (does not change when moving)
     row: t.u32(), // lane, 0..TRACK_ROWS-1
     col: t.u32(), // position along the track, 0..TRACK_COLS-1
     isBot: t.bool(),
@@ -238,6 +241,7 @@ function seatHuman(
     roomCode: code,
     name,
     piece,
+    colorIndex: lane,
     row: lane,
     col: 0,
     isBot: false,
@@ -356,7 +360,12 @@ function mulberry32(seed: number): () => number {
 // follow the PRD: calm opening, contended midgame, high-pressure endgame. We
 // never wall off more than (TRACK_ROWS - 4) lanes in a column, so every column
 // stays passable.
-function generateTrack(ctx: Ctx, code: string, seed: number) {
+function generateTrack(
+  ctx: Ctx,
+  code: string,
+  seed: number,
+  allowPromotion: boolean,
+) {
   for (const o of [...ctx.db.obstacle.roomCode.filter(code)]) {
     ctx.db.obstacle.id.delete(o.id);
   }
@@ -406,8 +415,8 @@ function generateTrack(ctx: Ctx, code: string, seed: number) {
       if (!used.has(cellKey(row, col))) {
         used.add(cellKey(row, col));
         const roll = rng();
-        const kind =
-          roll < 0.55 ? "mine" : roll < 0.85 ? "freeze" : "promotion";
+        let kind = roll < 0.55 ? "mine" : roll < 0.85 ? "freeze" : "promotion";
+        if (kind === "promotion" && !allowPromotion) kind = "freeze";
         ctx.db.itemSpawn.insert({ id: 0n, roomCode: code, row, col, kind });
       }
     }
@@ -588,19 +597,20 @@ function chooseBotMove(ctx: Ctx, bot: RacerRow, legal: Cell[]): Cell {
   return best;
 }
 
-// Fill a room with bots up to MIN_RACERS when the race starts.
-function fillBots(ctx: Ctx, code: string) {
+// Fill a room with bots up to MIN_RACERS when the race starts. Bots race the
+// same piece as everyone else (room.piece).
+function fillBots(ctx: Ctx, code: string, piece: string) {
   while (racersInRoom(ctx, code).length < MIN_RACERS) {
     const lane = nextFreeLane(ctx, code);
     const name = BOT_NAMES[ctx.random.integerInRange(0, BOT_NAMES.length - 1)];
     const kind = BOT_KINDS[ctx.random.integerInRange(0, BOT_KINDS.length - 1)];
-    const piece = PIECES[ctx.random.integerInRange(0, PIECES.length - 1)];
     ctx.db.racer.insert({
       id: 0n,
       identity: Identity.zero(),
       roomCode: code,
       name,
       piece,
+      colorIndex: lane,
       row: lane,
       col: 0,
       isBot: true,
@@ -630,7 +640,8 @@ function ensureBotTimer(ctx: Ctx) {
 
 // ── Reducers ─────────────────────────────────────────────────────────────────
 
-// Create a fresh room and seat the caller in it as host.
+// Create a fresh room and seat the caller in it as host. The host's chosen
+// piece becomes the single piece everyone in the room races.
 export const createRoom = spacetimedb.reducer(
   { name: t.string(), piece: t.string() },
   (ctx, { name, piece }) => {
@@ -645,40 +656,20 @@ export const createRoom = spacetimedb.reducer(
       code,
       status: "lobby",
       seed: ctx.random.integerInRange(1, 0x7fffffff),
+      piece: cleanPiece,
       host: ctx.sender,
       createdAt: ctx.timestamp,
       startedAt: undefined,
     });
-
-    ctx.db.racer.insert({
-      id: 0n,
-      identity: ctx.sender,
-      roomCode: code,
-      name: cleanName,
-      piece: cleanPiece,
-      row: 0,
-      col: 0,
-      isBot: false,
-      botKind: "",
-      online: true,
-      ready: false,
-      finished: false,
-      finishRank: 0,
-      joinedAt: ctx.timestamp,
-      lastMoveAt: ctx.timestamp,
-      stunnedUntil: ctx.timestamp,
-      heldItem: "",
-      promotedUntil: ctx.timestamp,
-    });
+    seatHuman(ctx, code, cleanName, cleanPiece, 0);
   },
 );
 
-// Join an existing room in its lobby phase.
+// Join an existing room in its lobby phase. The joiner races the room's piece.
 export const joinRoom = spacetimedb.reducer(
-  { code: t.string(), name: t.string(), piece: t.string() },
-  (ctx, { code, name, piece }) => {
+  { code: t.string(), name: t.string() },
+  (ctx, { code, name }) => {
     const cleanName = validateName(name);
-    const cleanPiece = validatePiece(piece);
 
     const room = ctx.db.room.code.find(code);
     if (!room) throw new SenderError(`No room with code ${code}`);
@@ -688,42 +679,27 @@ export const joinRoom = spacetimedb.reducer(
       throw new SenderError("Room is full");
 
     removeCallerRacers(ctx);
-    const lane = nextFreeLane(ctx, code);
-
-    ctx.db.racer.insert({
-      id: 0n,
-      identity: ctx.sender,
-      roomCode: code,
-      name: cleanName,
-      piece: cleanPiece,
-      row: lane,
-      col: 0,
-      isBot: false,
-      botKind: "",
-      online: true,
-      ready: false,
-      finished: false,
-      finishRank: 0,
-      joinedAt: ctx.timestamp,
-      lastMoveAt: ctx.timestamp,
-      stunnedUntil: ctx.timestamp,
-      heldItem: "",
-      promotedUntil: ctx.timestamp,
-    });
+    seatHuman(ctx, code, cleanName, room.piece, nextFreeLane(ctx, code));
   },
 );
 
-// Change piece while still in the lobby.
-export const setPiece = spacetimedb.reducer(
+// Host changes the race piece in the lobby; everyone in the room switches to it.
+export const setRoomPiece = spacetimedb.reducer(
   { piece: t.string() },
   (ctx, { piece }) => {
     const cleanPiece = validatePiece(piece);
     const mine = [...ctx.db.racer.identity.filter(ctx.sender)][0];
     if (!mine) throw new SenderError("You are not in a room");
     const room = ctx.db.room.code.find(mine.roomCode);
-    if (room && room.status !== "lobby")
-      throw new SenderError("Race already started");
-    ctx.db.racer.id.update({ ...mine, piece: cleanPiece });
+    if (!room) throw new SenderError("Room not found");
+    if (!room.host.equals(ctx.sender))
+      throw new SenderError("Only the host can choose the piece");
+    if (room.status !== "lobby") throw new SenderError("Race already started");
+
+    ctx.db.room.code.update({ ...room, piece: cleanPiece });
+    for (const r of racersInRoom(ctx, mine.roomCode)) {
+      ctx.db.racer.id.update({ ...r, piece: cleanPiece });
+    }
   },
 );
 
@@ -737,7 +713,8 @@ export const setReady = spacetimedb.reducer(
   },
 );
 
-// Host starts the race. Resets everyone to the starting line.
+// Host starts the race: generate the track, fill bots, and begin a 5s countdown
+// (the bot scheduler flips the room to "racing" when the countdown elapses).
 export const startRace = spacetimedb.reducer(
   { code: t.string() },
   (ctx, { code }) => {
@@ -747,26 +724,32 @@ export const startRace = spacetimedb.reducer(
       throw new SenderError("Only the host can start the race");
     if (room.status !== "lobby") throw new SenderError("Race already started");
 
-    generateTrack(ctx, code, room.seed);
-    fillBots(ctx, code); // top up to MIN_RACERS with bots
+    // Promotion (→ Queen) items only make sense when not already racing Queens.
+    generateTrack(ctx, code, room.seed, room.piece !== "queen");
+    fillBots(ctx, code, room.piece); // top up to MIN_RACERS with bots
     ensureBotTimer(ctx); // make sure the bot scheduler is running
 
+    // Racing starts when the countdown ends; cooldowns are measured from then.
+    const raceStart = new Timestamp(
+      ctx.timestamp.microsSinceUnixEpoch + COUNTDOWN_MICROS,
+    );
     for (const r of racersInRoom(ctx, code)) {
       ctx.db.racer.id.update({
         ...r,
+        piece: room.piece, // everyone races the same piece
         col: 0,
         finished: false,
         finishRank: 0,
-        lastMoveAt: ctx.timestamp, // cooldown counts from the start
-        stunnedUntil: ctx.timestamp,
+        lastMoveAt: raceStart,
+        stunnedUntil: raceStart,
         heldItem: "",
         promotedUntil: ctx.timestamp,
       });
     }
     ctx.db.room.code.update({
       ...room,
-      status: "racing",
-      startedAt: ctx.timestamp,
+      status: "countdown",
+      startedAt: raceStart,
     });
   },
 );
@@ -839,11 +822,12 @@ export const quickPlay = spacetimedb.reducer(
     }
 
     if (target) {
+      // Joining an existing room: race that room's piece, not the requested one.
       seatHuman(
         ctx,
         target.code,
         cleanName,
-        cleanPiece,
+        target.piece,
         nextFreeLane(ctx, target.code),
       );
     } else {
@@ -852,6 +836,7 @@ export const quickPlay = spacetimedb.reducer(
         code,
         status: "lobby",
         seed: ctx.random.integerInRange(1, 0x7fffffff),
+        piece: cleanPiece,
         host: ctx.sender,
         createdAt: ctx.timestamp,
         startedAt: undefined,
@@ -870,6 +855,13 @@ export const botTick = spacetimedb.reducer(
 
     const now = ctx.timestamp.microsSinceUnixEpoch;
     for (const room of ctx.db.room.iter()) {
+      // End the pre-race countdown.
+      if (room.status === "countdown") {
+        if (room.startedAt && now >= room.startedAt.microsSinceUnixEpoch) {
+          ctx.db.room.code.update({ ...room, status: "racing" });
+        }
+        continue;
+      }
       if (room.status !== "racing") continue;
       for (const bot of [...ctx.db.racer.roomCode.filter(room.code)]) {
         if (!bot.isBot || bot.finished) continue;

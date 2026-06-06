@@ -61,5 +61,7 @@ or reducers changed) `pnpm spacetime:generate`.
       scheduled `botTick`; bot-aware room teardown when the last human leaves.
 - [x] **M5** — Items (promotion → Queen, freeze the leader, drop a mine) with
       track pickups; board polish (fixed camera, higher contrast, disc sprites).
-- [ ] **M5+** — Sound + animation polish (optional).
+- [x] **M5+** — Design pass: one host-picked piece for everyone (+ Queen),
+      stable per-racer colours, 5s countdown, How-to-Play, redesigned board /
+      walls / hazards / items, and synthesized sounds (countdown / win / power-up).
 - [ ] **M6** — Deploy: Maincloud backend + static frontend.

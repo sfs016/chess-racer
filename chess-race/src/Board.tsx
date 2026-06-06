@@ -18,9 +18,9 @@ const GLYPHS: Record<string, string> = {
 };
 
 const ITEM_GLYPH: Record<string, string> = {
-  promotion: "⬆",
+  promotion: "♛",
   freeze: "❄",
-  mine: "✦",
+  mine: "💣",
 };
 const ITEM_LABEL: Record<string, string> = {
   promotion: "Promote to Queen",
@@ -127,7 +127,9 @@ export default function Board({
   const cols: number[] = [];
   for (let i = 0; i < WINDOW; i++) cols.push(startCol + i);
 
-  const laneColor = (r: Racer) => LANE_COLORS[r.row % LANE_COLORS.length];
+  // Stable colour: keyed off the racer's fixed colorIndex, not its (moving) row.
+  const laneColor = (r: Racer) =>
+    LANE_COLORS[r.colorIndex % LANE_COLORS.length];
   const finishers = [...racers]
     .filter((r) => r.finished)
     .sort((a, b) => a.finishRank - b.finishRank);
@@ -223,11 +225,15 @@ export default function Board({
                 ) : isWall ? (
                   <span className="wall-mark" />
                 ) : isMine ? (
-                  <span className="mine-mark">✸</span>
+                  <span className="pawn-mark">♟</span>
                 ) : item ? (
-                  <span className={`item-mark item-${item.kind}`}>
-                    {ITEM_GLYPH[item.kind]}
-                  </span>
+                  item.kind === "mine" ? (
+                    <span className="bomb item-mark" />
+                  ) : item.kind === "promotion" ? (
+                    <span className="item-mark item-promotion">♛</span>
+                  ) : (
+                    <span className="item-mark item-freeze">❄</span>
+                  )
                 ) : clickable ? (
                   <span className="legal-dot" />
                 ) : null}
@@ -239,8 +245,10 @@ export default function Board({
 
       <p className="muted fog-note">
         Fog: you see {VISION} ahead. <span className="legend-wall" /> wall ·{" "}
-        <span className="legend-mine">✸</span> mine ·{" "}
-        <span className="legend-item">⬆❄✦</span> items
+        <span className="pawn-mark mini">♟</span> pawn-mine (
+        <span className="threat-text">red = danger</span>) ·{" "}
+        <span className="item-promotion">♛</span>
+        <span className="item-freeze">❄</span>💣 power-ups
       </p>
 
       {/* Full-track ladder so you can read the whole field's progress. */}

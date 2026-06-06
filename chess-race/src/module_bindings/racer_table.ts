@@ -16,6 +16,7 @@ export default __t.row({
   roomCode: __t.string().name("room_code"),
   name: __t.string(),
   piece: __t.string(),
+  colorIndex: __t.u32().name("color_index"),
   row: __t.u32(),
   col: __t.u32(),
   isBot: __t.bool().name("is_bot"),
