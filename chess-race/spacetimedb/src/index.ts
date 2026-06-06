@@ -271,15 +271,11 @@ export const onConnect = spacetimedb.clientConnected((ctx) => {
   }
 });
 
-// Mark offline on disconnect; drop them from the lobby if the race hasn't begun.
+// Mark offline on disconnect, but keep the seat: clients reconnect with the
+// same identity (e.g. on a page refresh) and onConnect restores them. Seats are
+// only freed by an explicit leaveRoom. (A reaper for abandoned rooms is M4.)
 export const onDisconnect = spacetimedb.clientDisconnected((ctx) => {
   for (const r of [...ctx.db.racer.identity.filter(ctx.sender)]) {
-    const room = ctx.db.room.code.find(r.roomCode);
-    if (room && room.status === "lobby") {
-      ctx.db.racer.id.delete(r.id);
-      cleanupRoomIfEmpty(ctx, r.roomCode);
-    } else {
-      ctx.db.racer.id.update({ ...r, online: false });
-    }
+    ctx.db.racer.id.update({ ...r, online: false });
   }
 });
