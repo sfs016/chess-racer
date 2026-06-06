@@ -55,6 +55,7 @@ function App() {
   const [error, setError] = useState<string | null>(null);
 
   const createRoom = useReducer(reducers.createRoom);
+  const quickPlay = useReducer(reducers.quickPlay);
   const joinRoom = useReducer(reducers.joinRoom);
   const setPieceReducer = useReducer(reducers.setPiece);
   const setReady = useReducer(reducers.setReady);
@@ -136,13 +137,26 @@ function App() {
             </div>
           </div>
 
-          <button
-            className="primary"
-            disabled={!canSubmit}
-            onClick={() => run(createRoom({ name: name.trim(), piece }))}
-          >
-            Create Room
-          </button>
+          <div className="home-actions">
+            <button
+              className="primary"
+              disabled={!canSubmit}
+              onClick={() => run(quickPlay({ name: name.trim(), piece }))}
+            >
+              ⚡ Quick Play
+            </button>
+            <button
+              className="secondary"
+              disabled={!canSubmit}
+              onClick={() => run(createRoom({ name: name.trim(), piece }))}
+            >
+              Create Room
+            </button>
+          </div>
+          <p className="muted hint">
+            Quick Play drops you into an open room; the host's Start fills empty
+            seats with bots.
+          </p>
 
           <div className="divider">or join with a code</div>
 

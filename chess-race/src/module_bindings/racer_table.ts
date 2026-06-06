@@ -19,6 +19,7 @@ export default __t.row({
   row: __t.u32(),
   col: __t.u32(),
   isBot: __t.bool().name("is_bot"),
+  botKind: __t.string().name("bot_kind"),
   online: __t.bool(),
   ready: __t.bool(),
   finished: __t.bool(),

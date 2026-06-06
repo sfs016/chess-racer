@@ -6,8 +6,9 @@
 // and call reducers — there is no separate API server.
 //
 // Implemented: lobby (rooms/racers/lanes), authoritative slide movement with a
-// cooldown, and a procedurally-generated track of walls + pawn mines.
-// Still to come: quick-play + bots, items, deploy.
+// cooldown, a procedurally-generated track of walls + pawn mines, quick-play,
+// and rule-based bots driven by a scheduled tick.
+// Still to come: items, deploy.
 // ─────────────────────────────────────────────────────────────────────────────
 import {
   schema,
@@ -17,7 +18,7 @@ import {
   type ReducerCtx,
   type InferSchema,
 } from "spacetimedb/server";
-import { Timestamp } from "spacetimedb";
+import { Timestamp, Identity, ScheduleAt } from "spacetimedb";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 // NOTE: a SpacetimeDB module may only export spacetime artifacts (reducers,
@@ -32,6 +33,22 @@ const MOVE_COOLDOWN_MICROS = 600_000n; // 0.6s between moves (PRD: 500–700ms)
 const SAFE_COLS = 3; // columns near the start kept clear of hazards
 const MINE_KNOCKBACK = 3; // tiles a triggered pawn mine knocks you back
 const STUN_MICROS = 1_500_000n; // 1.5s stun after triggering a mine
+
+const MIN_RACERS = 4; // fill with bots up to this many at race start
+// Bots tick slower than the human move cooldown (0.6s) so an attentive human
+// keeps an edge; bots stay competitive but beatable.
+const BOT_TICK_MICROS = 950_000n;
+const BOT_NAMES = [
+  "Garry",
+  "Magnus",
+  "Bobby",
+  "Judit",
+  "Hikaru",
+  "Vishy",
+  "Mikhail",
+  "Anatoly",
+];
+const BOT_KINDS = ["greedy", "cautious", "wild"] as const; // simple bot AIs
 
 const PIECES = ["rook", "knight", "bishop"] as const;
 type Piece = (typeof PIECES)[number];
@@ -74,6 +91,7 @@ const racer = table(
     row: t.u32(), // lane, 0..TRACK_ROWS-1
     col: t.u32(), // position along the track, 0..TRACK_COLS-1
     isBot: t.bool(),
+    botKind: t.string(), // "" for humans; one of BOT_KINDS for bots
     online: t.bool(),
     ready: t.bool(),
     finished: t.bool(),
@@ -96,11 +114,24 @@ const obstacle = table(
   },
 );
 
-const spacetimedb = schema({ room, racer, obstacle });
+// A repeating scheduled timer that drives bot moves. One row, inserted at init;
+// SpacetimeDB calls `botTick` every BOT_TICK_MICROS.
+const botTimer = table(
+  { name: "bot_timer", scheduled: (): any => botTick }, // eslint-disable-line @typescript-eslint/no-explicit-any
+  {
+    scheduledId: t.u64().primaryKey().autoInc(),
+    scheduledAt: t.scheduleAt(),
+  },
+);
+
+const spacetimedb = schema({ room, racer, obstacle, botTimer });
 export default spacetimedb;
 
 // Reducer context typed against this module's schema (gives us ctx.db.room etc).
 type Ctx = ReducerCtx<InferSchema<typeof spacetimedb>>;
+// Table rows (insert returns the row, so this infers each row's shape).
+type RacerRow = ReturnType<Ctx["db"]["racer"]["insert"]>;
+type RoomRow = ReturnType<Ctx["db"]["room"]["insert"]>;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -152,16 +183,49 @@ function racersInRoom(ctx: Ctx, code: string) {
 function removeCallerRacers(ctx: Ctx) {
   for (const r of [...ctx.db.racer.identity.filter(ctx.sender)]) {
     ctx.db.racer.id.delete(r.id);
-    cleanupRoomIfEmpty(ctx, r.roomCode);
+    cleanupRoomIfNoHumans(ctx, r.roomCode);
   }
 }
 
-// Delete a room once nobody is left in it, so the lobby list stays tidy.
-function cleanupRoomIfEmpty(ctx: Ctx, code: string) {
-  if (racersInRoom(ctx, code).length === 0) {
-    const r = ctx.db.room.code.find(code);
-    if (r) ctx.db.room.code.delete(code);
+// Tear a room down once no humans remain (bots can't keep a room alive): delete
+// its bots, obstacles, and the room itself, so the lobby and bot tick stay tidy.
+function cleanupRoomIfNoHumans(ctx: Ctx, code: string) {
+  const racers = racersInRoom(ctx, code);
+  if (racers.some((r) => !r.isBot)) return;
+  for (const r of racers) ctx.db.racer.id.delete(r.id);
+  for (const o of [...ctx.db.obstacle.roomCode.filter(code)]) {
+    ctx.db.obstacle.id.delete(o.id);
   }
+  const room = ctx.db.room.code.find(code);
+  if (room) ctx.db.room.code.delete(code);
+}
+
+// Insert a human racer for the caller at a given lane.
+function seatHuman(
+  ctx: Ctx,
+  code: string,
+  name: string,
+  piece: string,
+  lane: number,
+) {
+  ctx.db.racer.insert({
+    id: 0n,
+    identity: ctx.sender,
+    roomCode: code,
+    name,
+    piece,
+    row: lane,
+    col: 0,
+    isBot: false,
+    botKind: "",
+    online: true,
+    ready: false,
+    finished: false,
+    finishRank: 0,
+    joinedAt: ctx.timestamp,
+    lastMoveAt: ctx.timestamp,
+    stunnedUntil: ctx.timestamp,
+  });
 }
 
 // ── Movement ─────────────────────────────────────────────────────────────────
@@ -312,6 +376,154 @@ function countColumn(used: Set<string>, col: number): number {
   return n;
 }
 
+// Build the blocker map for a room (walls/mines + other racers), excluding the
+// mover. Shared by human moves, bot moves, and legal-target generation.
+function buildBlockers(ctx: Ctx, code: string, moverId: bigint): Blockers {
+  const blockers: Blockers = new Map();
+  for (const o of ctx.db.obstacle.roomCode.filter(code)) {
+    blockers.set(cellKey(o.row, o.col), o.kind === "wall" ? "wall" : "mine");
+  }
+  for (const r of ctx.db.racer.roomCode.filter(code)) {
+    if (r.id !== moverId && !r.finished) {
+      blockers.set(cellKey(r.row, r.col), "racer");
+    }
+  }
+  return blockers;
+}
+
+// Apply a move that has already been validated as legal and ready: resolve mine
+// capture / knockback + stun, write the new position, and end the race once
+// everyone has finished. Shared by submit_move (humans) and botTick (bots).
+function applyMove(ctx: Ctx, mover: RacerRow, toRow: number, toCol: number) {
+  let finalCol = toCol;
+  let stunnedUntil = mover.stunnedUntil;
+
+  const minedHere = [...ctx.db.obstacle.roomCode.filter(mover.roomCode)].find(
+    (o) => o.kind === "pawn_mine" && o.row === toRow && o.col === toCol,
+  );
+  if (minedHere) {
+    ctx.db.obstacle.id.delete(minedHere.id); // landed on the mine: defuse it
+  } else {
+    const threatened = [
+      ...ctx.db.obstacle.roomCode.filter(mover.roomCode),
+    ].some(
+      (o) =>
+        o.kind === "pawn_mine" &&
+        o.col === toCol - 1 &&
+        (o.row === toRow - 1 || o.row === toRow + 1),
+    );
+    if (threatened) {
+      finalCol = Math.max(0, toCol - MINE_KNOCKBACK);
+      stunnedUntil = new Timestamp(
+        ctx.timestamp.microsSinceUnixEpoch + STUN_MICROS,
+      );
+    }
+  }
+
+  const finished = finalCol >= FINISH_COL;
+  const finishRank = finished
+    ? racersInRoom(ctx, mover.roomCode).filter((r) => r.finished).length + 1
+    : 0;
+
+  ctx.db.racer.id.update({
+    ...mover,
+    row: toRow,
+    col: finalCol,
+    lastMoveAt: ctx.timestamp,
+    stunnedUntil,
+    finished,
+    finishRank,
+  });
+
+  const room = ctx.db.room.code.find(mover.roomCode);
+  if (
+    room &&
+    finished &&
+    racersInRoom(ctx, mover.roomCode).every((r) => r.finished)
+  ) {
+    ctx.db.room.code.update({ ...room, status: "finished" });
+  }
+}
+
+// ── Bots ─────────────────────────────────────────────────────────────────────
+
+// Pick a bot's destination from its legal targets, by personality.
+function chooseBotMove(ctx: Ctx, bot: RacerRow, legal: Cell[]): Cell {
+  const mineTiles = new Set<string>();
+  const threatTiles = new Set<string>();
+  for (const o of ctx.db.obstacle.roomCode.filter(bot.roomCode)) {
+    if (o.kind !== "pawn_mine") continue;
+    mineTiles.add(cellKey(o.row, o.col));
+    threatTiles.add(cellKey(o.row - 1, o.col + 1));
+    threatTiles.add(cellKey(o.row + 1, o.col + 1));
+  }
+
+  if (bot.botKind === "wild") {
+    return legal[Math.floor(ctx.random() * legal.length)];
+  }
+
+  const scoreOf = (c: Cell): number => {
+    const k = cellKey(c.row, c.col);
+    let s = c.col; // forward progress is the main driver
+    if (threatTiles.has(k) && !mineTiles.has(k)) {
+      s -= bot.botKind === "cautious" ? 1000 : 30; // avoid getting knocked back
+    }
+    if (mineTiles.has(k)) {
+      s += bot.botKind === "cautious" ? -8 : 6; // capturing clears the lane
+    }
+    return s + ctx.random() * 1.5; // tie-break noise so bots vary
+  };
+
+  let best = legal[0];
+  let bestScore = -Infinity;
+  for (const c of legal) {
+    const s = scoreOf(c);
+    if (s > bestScore) {
+      bestScore = s;
+      best = c;
+    }
+  }
+  return best;
+}
+
+// Fill a room with bots up to MIN_RACERS when the race starts.
+function fillBots(ctx: Ctx, code: string) {
+  while (racersInRoom(ctx, code).length < MIN_RACERS) {
+    const lane = nextFreeLane(ctx, code);
+    const name = BOT_NAMES[ctx.random.integerInRange(0, BOT_NAMES.length - 1)];
+    const kind = BOT_KINDS[ctx.random.integerInRange(0, BOT_KINDS.length - 1)];
+    const piece = PIECES[ctx.random.integerInRange(0, PIECES.length - 1)];
+    ctx.db.racer.insert({
+      id: 0n,
+      identity: Identity.zero(),
+      roomCode: code,
+      name,
+      piece,
+      row: lane,
+      col: 0,
+      isBot: true,
+      botKind: kind,
+      online: true,
+      ready: true,
+      finished: false,
+      finishRank: 0,
+      joinedAt: ctx.timestamp,
+      lastMoveAt: ctx.timestamp,
+      stunnedUntil: ctx.timestamp,
+    });
+  }
+}
+
+// Make sure the repeating bot scheduler exists (idempotent).
+function ensureBotTimer(ctx: Ctx) {
+  if ([...ctx.db.botTimer.iter()].length === 0) {
+    ctx.db.botTimer.insert({
+      scheduledId: 0n,
+      scheduledAt: ScheduleAt.interval(BOT_TICK_MICROS),
+    });
+  }
+}
+
 // ── Reducers ─────────────────────────────────────────────────────────────────
 
 // Create a fresh room and seat the caller in it as host.
@@ -343,6 +555,7 @@ export const createRoom = spacetimedb.reducer(
       row: 0,
       col: 0,
       isBot: false,
+      botKind: "",
       online: true,
       ready: false,
       finished: false,
@@ -380,6 +593,7 @@ export const joinRoom = spacetimedb.reducer(
       row: lane,
       col: 0,
       isBot: false,
+      botKind: "",
       online: true,
       ready: false,
       finished: false,
@@ -426,6 +640,8 @@ export const startRace = spacetimedb.reducer(
     if (room.status !== "lobby") throw new SenderError("Race already started");
 
     generateTrack(ctx, code, room.seed);
+    fillBots(ctx, code); // top up to MIN_RACERS with bots
+    ensureBotTimer(ctx); // make sure the bot scheduler is running
 
     for (const r of racersInRoom(ctx, code)) {
       ctx.db.racer.id.update({
@@ -467,64 +683,91 @@ export const submitMove = spacetimedb.reducer(
     if (nowMicros - me.lastMoveAt.microsSinceUnixEpoch < MOVE_COOLDOWN_MICROS)
       throw new SenderError("Move is on cooldown");
 
-    // Build the blocker map: walls + mines from the track, plus other racers.
-    const obstacles = [...ctx.db.obstacle.roomCode.filter(me.roomCode)];
-    const blockers: Blockers = new Map();
-    for (const o of obstacles) {
-      blockers.set(cellKey(o.row, o.col), o.kind === "wall" ? "wall" : "mine");
-    }
-    for (const r of ctx.db.racer.roomCode.filter(me.roomCode)) {
-      if (r.id !== me.id && !r.finished)
-        blockers.set(cellKey(r.row, r.col), "racer");
-    }
-
+    const blockers = buildBlockers(ctx, me.roomCode, me.id);
     const legal = legalTargets(me.piece, me.row, me.col, blockers);
     if (!legal.some((c) => c.row === toRow && c.col === toCol)) {
       throw new SenderError("Illegal move");
     }
 
-    // Resolve mine interactions at the landing tile.
-    let finalCol = toCol;
-    let stunnedUntil = me.stunnedUntil;
-    const minedHere = obstacles.find(
-      (o) => o.kind === "pawn_mine" && o.row === toRow && o.col === toCol,
-    );
-    if (minedHere) {
-      // Landed directly on a mine: capture (remove) it, no penalty.
-      ctx.db.obstacle.id.delete(minedHere.id);
-    } else {
-      // A pawn mine threatens its two forward diagonals (mr±1, mc+1), so the
-      // landing tile is threatened by a mine one column back, one row off.
-      const threatened = obstacles.some(
-        (o) =>
-          o.kind === "pawn_mine" &&
-          o.col === toCol - 1 &&
-          (o.row === toRow - 1 || o.row === toRow + 1),
-      );
-      if (threatened) {
-        finalCol = Math.max(0, toCol - MINE_KNOCKBACK);
-        stunnedUntil = new Timestamp(nowMicros + STUN_MICROS);
+    applyMove(ctx, me, toRow, toCol);
+  },
+);
+
+// Quick Play: seat the caller in the newest joinable lobby, or open a fresh room
+// if none is available.
+export const quickPlay = spacetimedb.reducer(
+  { name: t.string(), piece: t.string() },
+  (ctx, { name, piece }) => {
+    const cleanName = validateName(name);
+    const cleanPiece = validatePiece(piece);
+    removeCallerRacers(ctx);
+
+    let target: RoomRow | undefined;
+    for (const room of ctx.db.room.iter()) {
+      if (room.status !== "lobby") continue;
+      if (racersInRoom(ctx, room.code).length >= MAX_RACERS) continue;
+      if (
+        !target ||
+        room.createdAt.microsSinceUnixEpoch >
+          target.createdAt.microsSinceUnixEpoch
+      ) {
+        target = room;
       }
     }
 
-    const finished = finalCol >= FINISH_COL;
-    const finishRank = finished
-      ? racersInRoom(ctx, me.roomCode).filter((r) => r.finished).length + 1
-      : 0;
+    if (target) {
+      seatHuman(
+        ctx,
+        target.code,
+        cleanName,
+        cleanPiece,
+        nextFreeLane(ctx, target.code),
+      );
+    } else {
+      const code = generateRoomCode(ctx);
+      ctx.db.room.insert({
+        code,
+        status: "lobby",
+        seed: ctx.random.integerInRange(1, 0x7fffffff),
+        host: ctx.sender,
+        createdAt: ctx.timestamp,
+        startedAt: undefined,
+      });
+      seatHuman(ctx, code, cleanName, cleanPiece, 0);
+    }
+  },
+);
 
-    ctx.db.racer.id.update({
-      ...me,
-      row: toRow,
-      col: finalCol,
-      lastMoveAt: ctx.timestamp,
-      stunnedUntil,
-      finished,
-      finishRank,
-    });
+// Scheduled: advances every bot one move. Fires on the bot_timer interval; only
+// the scheduler (the module identity) may invoke it.
+export const botTick = spacetimedb.reducer(
+  { timer: botTimer.rowType },
+  (ctx) => {
+    if (!ctx.sender.equals(ctx.databaseIdentity)) return;
 
-    // End the race once every racer has crossed the line.
-    if (finished && racersInRoom(ctx, me.roomCode).every((r) => r.finished)) {
-      ctx.db.room.code.update({ ...room, status: "finished" });
+    const now = ctx.timestamp.microsSinceUnixEpoch;
+    for (const room of ctx.db.room.iter()) {
+      if (room.status !== "racing") continue;
+      for (const bot of [...ctx.db.racer.roomCode.filter(room.code)]) {
+        if (!bot.isBot || bot.finished) continue;
+        if (now < bot.stunnedUntil.microsSinceUnixEpoch) continue;
+        if (now - bot.lastMoveAt.microsSinceUnixEpoch < MOVE_COOLDOWN_MICROS)
+          continue;
+
+        // Re-read in case an earlier bot in this tick changed occupancy.
+        const current = ctx.db.racer.id.find(bot.id);
+        if (!current) continue;
+        const blockers = buildBlockers(ctx, room.code, current.id);
+        const legal = legalTargets(
+          current.piece,
+          current.row,
+          current.col,
+          blockers,
+        );
+        if (legal.length === 0) continue;
+        const target = chooseBotMove(ctx, current, legal);
+        applyMove(ctx, current, target.row, target.col);
+      }
     }
   },
 );
@@ -536,7 +779,9 @@ export const leaveRoom = spacetimedb.reducer((ctx) => {
 
 // ── Lifecycle ────────────────────────────────────────────────────────────────
 
-export const init = spacetimedb.init(() => {});
+export const init = spacetimedb.init((ctx) => {
+  ensureBotTimer(ctx);
+});
 
 // Mark the caller's racer online when they (re)connect.
 export const onConnect = spacetimedb.clientConnected((ctx) => {

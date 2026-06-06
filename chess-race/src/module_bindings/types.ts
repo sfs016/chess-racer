@@ -10,6 +10,12 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
+export const BotTimer = __t.object("BotTimer", {
+  scheduledId: __t.u64(),
+  scheduledAt: __t.scheduleAt(),
+});
+export type BotTimer = __Infer<typeof BotTimer>;
+
 export const Obstacle = __t.object("Obstacle", {
   id: __t.u64(),
   roomCode: __t.string(),
@@ -28,6 +34,7 @@ export const Racer = __t.object("Racer", {
   row: __t.u32(),
   col: __t.u32(),
   isBot: __t.bool(),
+  botKind: __t.string(),
   online: __t.bool(),
   ready: __t.bool(),
   finished: __t.bool(),

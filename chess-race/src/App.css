@@ -208,6 +208,21 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.home-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.home-actions > button {
+  flex: 1;
+}
+
+.hint {
+  font-size: 12px;
+  text-align: center;
+  margin: -6px 0 0;
+}
+
 .divider {
   text-align: center;
   color: var(--muted);
