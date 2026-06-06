@@ -12,9 +12,9 @@ export const FINISH_COL = TRACK_COLS - 1;
 export type Cell = { row: number; col: number };
 
 // Per-tile blocker kind:
-//   "wall"  — blocks a ray and cannot be landed on (knight jumps over it)
-//   "racer" — blocks a ray and cannot be landed on (knight jumps over it)
-//   "mine"  — can be landed on (captures it) but a ray cannot pass beyond it
+//   "wall"  - blocks a ray and cannot be landed on (knight jumps over it)
+//   "racer" - blocks a ray and cannot be landed on (knight jumps over it)
+//   "mine"  - can be landed on (captures it) but a ray cannot pass beyond it
 export type Blockers = Map<string, "wall" | "racer" | "mine">;
 
 export function cellKey(row: number, col: number): string {

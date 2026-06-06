@@ -574,7 +574,7 @@ button:disabled {
   border: 1px solid #6e2f1c;
 }
 
-/* Pawn-mine threatened diagonals — clearly dangerous. */
+/* Pawn-mine threatened diagonals - clearly dangerous. */
 .cell-threat {
   background: #5a2233;
   box-shadow: inset 0 0 0 2px rgba(255, 93, 93, 0.7);
@@ -642,11 +642,17 @@ button:disabled {
     inset 0 -4px 6px rgba(0, 0, 0, 0.32);
 }
 
+/* The player's own piece is drawn larger with a white ring so it's instantly
+   findable on a crowded board. */
 .piece-me {
+  width: 104%;
+  height: 104%;
+  font-size: clamp(24px, 5.4vw, 40px);
+  z-index: 3;
   box-shadow:
-    0 0 22px var(--lane),
-    0 0 0 3px #fff,
-    0 2px 5px rgba(0, 0, 0, 0.6),
+    0 0 26px var(--lane),
+    0 0 0 4px #fff,
+    0 3px 7px rgba(0, 0, 0, 0.65),
     inset 0 3px 4px rgba(255, 255, 255, 0.5),
     inset 0 -4px 6px rgba(0, 0, 0, 0.32);
 }
@@ -868,4 +874,56 @@ button:disabled {
 .modal .primary {
   width: 100%;
   margin-top: 6px;
+}
+
+/* ── "Built with SpacetimeDB" badge + hover tooltip ── */
+.stdb-badge {
+  position: relative;
+  margin-top: 20px;
+  font-size: 12px;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 13px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: help;
+  outline: none;
+}
+
+.stdb-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+}
+
+.stdb-tip {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%) translateY(6px);
+  width: 290px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 11px 13px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.55;
+  text-align: left;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.15s,
+    transform 0.15s;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.55);
+}
+
+.stdb-badge:hover .stdb-tip,
+.stdb-badge:focus-within .stdb-tip {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }

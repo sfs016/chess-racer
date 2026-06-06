@@ -13,6 +13,7 @@ import {
   setMuted,
   getMuted,
 } from "./sound";
+import { colorFor, colorName } from "./colors";
 
 const PIECES = [
   { id: "rook", glyph: "♜", label: "Rook" },
@@ -154,8 +155,9 @@ function App() {
         <div className="topbar">{muteBtn}</div>
         <div className="logo">♞ Chess Race</div>
         <p className="tagline">
-          Everyone races the same chess piece down a 100-tile track. Move by its
-          rules, dodge mines and walls, grab power-ups, reach the flag first.
+          Up to 10 players race the same chess piece down a 100-tile track. Move
+          by its rules, dodge mines and walls, grab power-ups, reach the flag
+          first.
         </p>
 
         <div className="card">
@@ -230,6 +232,15 @@ function App() {
         </div>
 
         {error && <p className="error">{error}</p>}
+
+        <div className="stdb-badge" tabIndex={0}>
+          <span className="stdb-dot" /> Built with SpacetimeDB
+          <span className="stdb-tip">
+            Every move is a SpacetimeDB reducer; the database runs the game
+            logic and syncs one authoritative board to all players live, so
+            there is no separate game server and no desync on contested tiles.
+          </span>
+        </div>
       </div>
     );
   }
@@ -290,8 +301,11 @@ function App() {
             <div className="countdown-overlay">
               <div className="countdown-num">{countdown || "GO!"}</div>
               <div className="countdown-sub">
-                Racing as {glyphFor(myRoom.piece)}{" "}
-                {PIECES.find((p) => p.id === myRoom.piece)?.label}
+                You are the{" "}
+                <b style={{ color: colorFor(myRacer.colorIndex) }}>
+                  {colorName(myRacer.colorIndex)} {glyphFor(myRoom.piece)}{" "}
+                  {PIECES.find((p) => p.id === myRoom.piece)?.label}
+                </b>
               </div>
             </div>
           )}
@@ -347,7 +361,7 @@ function App() {
 
         <div className="field">
           <span>
-            {isHost ? "Piece (everyone races this)" : "Piece — host chooses"}
+            {isHost ? "Piece (everyone races this)" : "Piece - host chooses"}
           </span>
           <div className="piece-row">
             {PIECES.map((p) => (

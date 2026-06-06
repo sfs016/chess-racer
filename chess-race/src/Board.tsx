@@ -9,6 +9,7 @@ import {
   VISION,
   FINISH_COL,
 } from "./game/moves";
+import { colorFor } from "./colors";
 
 const GLYPHS: Record<string, string> = {
   rook: "♜",
@@ -27,20 +28,6 @@ const ITEM_LABEL: Record<string, string> = {
   freeze: "Freeze the leader",
   mine: "Drop a mine",
 };
-
-// Stable per-lane colours so each racer reads as one identity.
-const LANE_COLORS = [
-  "#6ea8ff",
-  "#56d68a",
-  "#ff8f6b",
-  "#c98bff",
-  "#ffd166",
-  "#4dd0e1",
-  "#f06292",
-  "#a3e635",
-  "#ff6b6b",
-  "#9b7bff",
-];
 
 type Props = {
   me: Racer;
@@ -120,7 +107,7 @@ export default function Board({
     }, [obstacles, items, racers, me.id, me.piece, me.row, me.col, iAmQueen]);
 
   // Fixed-size camera: always the same number of columns (a few behind + full
-  // vision ahead), clamped at the track ends — no zoom near the finish, no shake.
+  // vision ahead), clamped at the track ends - no zoom near the finish, no shake.
   const BEHIND = 3;
   const WINDOW = VISION + BEHIND + 1;
   const startCol = Math.max(0, Math.min(me.col - BEHIND, TRACK_COLS - WINDOW));
@@ -128,8 +115,7 @@ export default function Board({
   for (let i = 0; i < WINDOW; i++) cols.push(startCol + i);
 
   // Stable colour: keyed off the racer's fixed colorIndex, not its (moving) row.
-  const laneColor = (r: Racer) =>
-    LANE_COLORS[r.colorIndex % LANE_COLORS.length];
+  const laneColor = (r: Racer) => colorFor(r.colorIndex);
   const finishers = [...racers]
     .filter((r) => r.finished)
     .sort((a, b) => a.finishRank - b.finishRank);

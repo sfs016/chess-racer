@@ -1,4 +1,4 @@
-// Tiny synthesized sound effects via the Web Audio API — no asset files, works
+// Tiny synthesized sound effects via the Web Audio API - no asset files, works
 // offline. The AudioContext is created lazily on first use (after a user
 // gesture, e.g. clicking Quick Play, so browsers allow playback).
 

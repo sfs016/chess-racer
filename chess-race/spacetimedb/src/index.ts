@@ -1,9 +1,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Chess Race — SpacetimeDB server module
+// Chess Race - SpacetimeDB server module
 //
 // Authoritative game server. All game state lives in tables; all mutations go
 // through reducers (transactional, deterministic). Clients subscribe to tables
-// and call reducers — there is no separate API server.
+// and call reducers - there is no separate API server.
 //
 // Implemented: lobby (rooms/racers/lanes), authoritative slide movement with a
 // cooldown, a procedurally-generated track of walls + pawn mines, quick-play,
@@ -25,7 +25,7 @@ import { Timestamp, Identity, ScheduleAt } from "spacetimedb";
 // lifecycle hooks, the default schema). Plain constants must stay un-exported.
 const TRACK_COLS = 100; // race length; finish line is the last column
 const TRACK_ROWS = 10; // lanes
-const MAX_RACERS = 8; // human + bot cap per room
+const MAX_RACERS = 10; // human + bot cap per room (one per lane)
 const VISION = 10; // how many columns ahead a racer can see / reach
 const FINISH_COL = TRACK_COLS - 1; // landing here (or beyond) finishes the race
 const MOVE_COOLDOWN_MICROS = 600_000n; // 0.6s between moves (PRD: 500–700ms)
@@ -36,9 +36,9 @@ const MINE_KNOCKBACK = 3; // tiles a triggered pawn mine knocks you back
 const STUN_MICROS = 1_500_000n; // 1.5s stun after triggering a mine
 
 // Items (string `kind` on item_spawn, and racer.heldItem):
-//   "promotion" — become a Queen for PROMOTION_MICROS
-//   "freeze"    — freeze the current leader for FREEZE_MICROS
-//   "mine"      — drop a pawn mine one tile behind you
+//   "promotion" - become a Queen for PROMOTION_MICROS
+//   "freeze"    - freeze the current leader for FREEZE_MICROS
+//   "mine"      - drop a pawn mine one tile behind you
 const PROMOTION_MICROS = 8_000_000n; // 8s as a Queen
 const FREEZE_MICROS = 3_000_000n; // 3s frozen
 
@@ -62,8 +62,8 @@ const PIECES = ["rook", "knight", "bishop", "queen"] as const;
 type Piece = (typeof PIECES)[number];
 
 // Obstacle kinds (string `kind` column on `obstacle`):
-//   "wall"      — blocks rook/bishop rays; knight jumps it; nobody lands on it
-//   "pawn_mine" — landable (captured when landed on); threatens its two forward
+//   "wall"      - blocks rook/bishop rays; knight jumps it; nobody lands on it
+//   "pawn_mine" - landable (captured when landed on); threatens its two forward
 //                 diagonals (mr±1, mc+1): landing there knocks you back + stuns
 
 // Room lifecycle (string column on `room`): lobby -> countdown -> racing -> finished
@@ -265,9 +265,9 @@ function seatHuman(
 type Cell = { row: number; col: number };
 
 // Per-tile blocker kind used by movement:
-//   "wall"  — blocks a ray and cannot be landed on (knight jumps over it)
-//   "racer" — blocks a ray and cannot be landed on (knight jumps over it)
-//   "mine"  — can be landed on (captures it) but a ray cannot pass beyond it
+//   "wall"  - blocks a ray and cannot be landed on (knight jumps over it)
+//   "racer" - blocks a ray and cannot be landed on (knight jumps over it)
+//   "mine"  - can be landed on (captures it) but a ray cannot pass beyond it
 type Blockers = Map<string, "wall" | "racer" | "mine">;
 
 function cellKey(row: number, col: number): string {
@@ -323,7 +323,7 @@ function legalTargets(
   }
   if (piece === "knight") {
     // Forward L-jumps only (column delta > 0); jumps over blockers, so only the
-    // landing tile matters — and you can't land on a wall or another racer.
+    // landing tile matters - and you can't land on a wall or another racer.
     const ls = [
       { dr: 2, dc: 1 },
       { dr: -2, dc: 1 },
@@ -733,10 +733,22 @@ export const startRace = spacetimedb.reducer(
     const raceStart = new Timestamp(
       ctx.timestamp.microsSinceUnixEpoch + COUNTDOWN_MICROS,
     );
+
+    // Randomize starting lanes (rows) via a shuffle. Everyone still starts at
+    // col 0, so the distance to the finish is equal and fair; only the lane
+    // (and visual order) is randomized. colorIndex is left untouched, so each
+    // racer keeps its stable colour.
+    const lanes = Array.from({ length: TRACK_ROWS }, (_, i) => i);
+    for (let i = lanes.length - 1; i > 0; i--) {
+      const j = ctx.random.integerInRange(0, i);
+      [lanes[i], lanes[j]] = [lanes[j], lanes[i]];
+    }
+    let laneIdx = 0;
     for (const r of racersInRoom(ctx, code)) {
       ctx.db.racer.id.update({
         ...r,
         piece: room.piece, // everyone races the same piece
+        row: lanes[laneIdx++],
         col: 0,
         finished: false,
         finishRank: 0,
