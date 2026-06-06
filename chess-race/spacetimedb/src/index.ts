@@ -7,8 +7,8 @@
 //
 // Implemented: lobby (rooms/racers/lanes), authoritative slide movement with a
 // cooldown, a procedurally-generated track of walls + pawn mines, quick-play,
-// rule-based bots driven by a scheduled tick, and items (promotion/freeze/mine).
-// Still to come: deploy.
+// configurable rule-based bots driven by a scheduled tick, and items
+// (promotion/freeze/mine). Deployed to Maincloud + a Vercel static frontend.
 // ─────────────────────────────────────────────────────────────────────────────
 import {
   schema,

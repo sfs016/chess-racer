@@ -1,9 +1,12 @@
 # ♞ Chess Racer
 
-A real-time multiplayer racing game where each player is a chess piece racing
-down a 100-tile track, moving only by that piece's legal vectors - blocking,
-dodging hazards, and navigating fog. Built on **SpacetimeDB** as the
+A real-time multiplayer racing game where up to 10 players race the same chess
+piece down a 100-tile track, moving only by that piece's legal vectors -
+blocking, dodging hazards, and navigating fog. Built on **SpacetimeDB** as the
 authoritative real-time backend for the SpacetimeDB hackathon.
+
+**Live:** https://chess-racer.vercel.app (frontend on Vercel, module on
+SpacetimeDB Maincloud: https://spacetimedb.com/chess-race)
 
 See [`../chess_race_prd.md`](../chess_race_prd.md) for the full product spec.
 
@@ -64,4 +67,6 @@ or reducers changed) `pnpm spacetime:generate`.
 - [x] **M5+** - Design pass: one host-picked piece for everyone (+ Queen),
       stable per-racer colours, 5s countdown, How-to-Play, redesigned board /
       walls / hazards / items, and synthesized sounds (countdown / win / power-up).
-- [ ] **M6** - Deploy: Maincloud backend + static frontend.
+- [x] **M6** - Deploy: module on SpacetimeDB Maincloud, static frontend on
+      Vercel (https://chess-racer.vercel.app). Plus configurable bots (0 =
+      human-only race, up to 10 racers) and renamed to Chess Racer.
