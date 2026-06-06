@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# SpacetimeDB local-only artifacts
+**/spacetime.local.json
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Env (keep .env.local out unless it's non-secret config; see note in README)
+# .env.local is currently non-secret (host + db name), so we track it.
+
+# OS
+.DS_Store
+
+# Editor
+.idea/
+*.swp
