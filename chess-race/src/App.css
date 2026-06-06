@@ -398,12 +398,12 @@ button:disabled {
 
 .board {
   display: grid;
-  gap: 2px;
-  background: var(--line);
-  border: 1px solid var(--line);
+  gap: 3px;
+  background: #0a0d16;
+  border: 1px solid #39425e;
   border-radius: 12px;
-  padding: 4px;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  padding: 5px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
 }
 
 .cell {
@@ -415,12 +415,13 @@ button:disabled {
   position: relative;
 }
 
+/* Higher-contrast checkerboard (less uniformly blue). */
 .cell-a {
-  background: #1a2138;
+  background: #444e6b;
 }
 
 .cell-b {
-  background: #151b2e;
+  background: #232a3d;
 }
 
 .cell-finish {
@@ -486,30 +487,41 @@ button:disabled {
 }
 
 .legal-dot {
-  width: 28%;
-  height: 28%;
+  width: 30%;
+  height: 30%;
   border-radius: 50%;
   background: var(--good);
-  opacity: 0.8;
+  box-shadow: 0 0 10px var(--good);
 }
 
+/* Pieces are bright colored discs (lane colour via the --lane variable) with a
+   dark glyph for maximum contrast against the board. */
 .piece {
-  font-size: clamp(16px, 3.4vw, 26px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 84%;
+  height: 84%;
+  border-radius: 50%;
+  background: var(--lane);
+  color: #0b0e16;
+  font-size: clamp(20px, 4.4vw, 34px);
+  font-weight: 700;
   line-height: 1;
-  text-shadow: 0 0 10px currentColor;
+  box-shadow:
+    0 0 14px var(--lane),
+    0 2px 5px rgba(0, 0, 0, 0.55),
+    inset 0 3px 4px rgba(255, 255, 255, 0.4),
+    inset 0 -4px 6px rgba(0, 0, 0, 0.3);
 }
 
 .piece-me {
-  filter: drop-shadow(0 0 6px currentColor);
-}
-
-.piece-me::after {
-  content: "";
-  position: absolute;
-  inset: 6%;
-  border-radius: 50%;
-  box-shadow: inset 0 0 0 2px currentColor;
-  opacity: 0.5;
+  box-shadow:
+    0 0 22px var(--lane),
+    0 0 0 3px #fff,
+    0 2px 5px rgba(0, 0, 0, 0.55),
+    inset 0 3px 4px rgba(255, 255, 255, 0.45),
+    inset 0 -4px 6px rgba(0, 0, 0, 0.3);
 }
 
 .fog-note {

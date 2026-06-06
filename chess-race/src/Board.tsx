@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, type CSSProperties } from "react";
 import type { Racer, Room, Obstacle } from "./module_bindings/types";
 import {
   legalTargets,
@@ -94,11 +94,14 @@ export default function Board({
       };
     }, [obstacles, racers, me.id, me.piece, me.row, me.col]);
 
-  // Player-centric window: a little behind, full vision ahead.
-  const startCol = Math.max(0, me.col - 2);
-  const endCol = Math.min(TRACK_COLS - 1, me.col + VISION);
+  // Fixed-size camera: always show the same number of columns (a few behind +
+  // full vision ahead) so the cell size never changes — no zoom near the finish
+  // — and clamp at the track ends so it scrolls smoothly instead of resizing.
+  const BEHIND = 3;
+  const WINDOW = VISION + BEHIND + 1; // constant column count
+  const startCol = Math.max(0, Math.min(me.col - BEHIND, TRACK_COLS - WINDOW));
   const cols: number[] = [];
-  for (let c = startCol; c <= endCol; c++) cols.push(c);
+  for (let i = 0; i < WINDOW; i++) cols.push(startCol + i);
 
   const laneColor = (r: Racer) => LANE_COLORS[r.row % LANE_COLORS.length];
   const finishers = [...racers]
@@ -169,7 +172,7 @@ export default function Board({
                 {occupant ? (
                   <span
                     className={`piece ${isMe ? "piece-me" : ""}`}
-                    style={{ color: laneColor(occupant) }}
+                    style={{ "--lane": laneColor(occupant) } as CSSProperties}
                     title={occupant.name}
                   >
                     {GLYPHS[occupant.piece] ?? "♟"}
