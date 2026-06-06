@@ -7,13 +7,16 @@ dodging walls and pawn mines, grabbing power-ups, and navigating fog. Built on
 
 **Play it live:** https://chess-racer.vercel.app
 
-The game lives in [`chess-race/`](chess-race/) — see its
-[README](chess-race/README.md) for architecture and local development. The
-product spec is in [`chess_race_prd.md`](chess_race_prd.md).
+<p align="center">
+  <img src="chess-race/docs/screenshot.png" alt="Chess Racer" width="420" />
+</p>
+
+The game lives in [`chess-race/`](chess-race/) - see its
+[README](chess-race/README.md) for architecture and local development.
 
 ## Stack
 
-- **Backend:** a SpacetimeDB module (TypeScript → WebAssembly) on Maincloud.
+- **Backend:** a SpacetimeDB module (TypeScript to WebAssembly) on Maincloud.
   Every move is a reducer; all game state lives in tables and syncs to clients
   in real time. There is no separate game server.
 - **Frontend:** React + Vite, deployed as a static site on Vercel.

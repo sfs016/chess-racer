@@ -8,7 +8,7 @@ authoritative real-time backend for the SpacetimeDB hackathon.
 **Live:** https://chess-racer.vercel.app (frontend on Vercel, module on
 SpacetimeDB Maincloud: https://spacetimedb.com/chess-race)
 
-See [`../chess_race_prd.md`](../chess_race_prd.md) for the full product spec.
+![Chess Racer](docs/screenshot.png)
 
 ## Architecture
 

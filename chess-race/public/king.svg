@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="king" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffd87a" />
+      <stop offset="1" stop-color="#ff8a5a" />
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#14151c" />
+  <g fill="url(#king)">
+    <!-- cross on top -->
+    <path d="M29.5 6 h5 v5 h5 v5 h-5 v6 h-5 v-6 h-5 v-5 h5 z" />
+    <!-- crown head + flared body -->
+    <path d="M32 23
+             c-5.5 0 -9.5 3.2 -9.5 7.4
+             c0 2.8 1.7 5 4.2 6.2
+             l-2.2 9.4
+             h15
+             l-2.2 -9.4
+             c2.5 -1.2 4.2 -3.4 4.2 -6.2
+             c0 -4.2 -4 -7.4 -9.5 -7.4 z" />
+    <!-- collar + base -->
+    <rect x="20" y="45" width="24" height="6" rx="2.5" />
+    <rect x="16.5" y="50.5" width="31" height="7.5" rx="3.5" />
+  </g>
+</svg>

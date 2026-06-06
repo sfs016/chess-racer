@@ -25,3 +25,7 @@ pnpm-debug.log*
 
 # Playwright MCP screenshots/snapshots
 .playwright-mcp/
+
+# Local-only planning docs (kept out of the repo)
+chess_race_prd.md
+hackathon-rules.md
