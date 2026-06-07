@@ -17,9 +17,10 @@
     "spacetime:publish": "spacetime publish --module-path spacetimedb --server maincloud chess-race"
   },
   "dependencies": {
-    "spacetimedb": "^2.4.1",
+    "@vercel/analytics": "^2.0.1",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "spacetimedb": "^2.4.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
